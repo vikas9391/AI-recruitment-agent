@@ -42,7 +42,8 @@ class JobViewSet(viewsets.ViewSet):
         serializer.is_valid(raise_exception=True)
         job = JobService.create_job(serializer.validated_data, request.user)
         response_serializer = JobDetailSerializer(job)
-        return api_response(True, "Job created successfully.", response_serializer.data, status.HTTP_201_CREATED)
+        data = {**response_serializer.data, "resume_ingestion": getattr(job, "resume_ingestion_summary", None)}
+        return api_response(True, "Job created successfully.", data, status.HTTP_201_CREATED)
 
     def update(self, request, pk=None):
         job = JobService.get_job(int(pk), request.user)
@@ -68,7 +69,8 @@ class JobViewSet(viewsets.ViewSet):
     def open_job(self, request, pk=None):
         job = JobService.open_job(int(pk), request.user)
         serializer = JobDetailSerializer(job)
-        return api_response(True, "Job opened successfully.", serializer.data, status.HTTP_200_OK)
+        data = {**serializer.data, "resume_ingestion": getattr(job, "resume_ingestion_summary", None)}
+        return api_response(True, "Job opened successfully.", data, status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="close")
     def close_job(self, request, pk=None):

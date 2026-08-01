@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Dict
 
 from django.db import transaction
@@ -5,6 +6,8 @@ from django.db.models import Q, QuerySet
 from rest_framework.exceptions import NotFound, ValidationError
 
 from .models import Job
+
+logger = logging.getLogger(__name__)
 
 
 class JobService:
@@ -17,7 +20,23 @@ class JobService:
         # another company's id.
         data.pop("company", None)
         job = Job.objects.create(created_by=user, company=user.company, **data)
+
+        # Synchronous inbox pull: if this job was created already OPEN and
+        # the company has a connected Gmail mailbox, immediately screen any
+        # matching resume emails waiting in the inbox. Never blocks or
+        # fails job creation — failures/summary are attached to the
+        # instance for the view/serializer to surface.
+        job.resume_ingestion_summary = JobService._pull_resumes(job, user)
         return job
+
+    @staticmethod
+    def _pull_resumes(job: Job, user) -> Dict[str, Any]:
+        try:
+            from apps.mailbox.services import ResumeIngestionService
+            return ResumeIngestionService.pull_resumes_for_job(job, user)
+        except Exception as exc:  # noqa: BLE001 — mailbox issues must never break job creation
+            logger.exception("Resume ingestion failed for job %s", job.id)
+            return {"attempted": False, "found": 0, "created": 0, "skipped": 0, "failed": 0, "errors": [str(exc)]}
 
     @staticmethod
     @transaction.atomic
@@ -88,6 +107,7 @@ class JobService:
             raise ValidationError("Job is already open.")
         job.status = Job.Status.OPEN
         job.save(update_fields=["status", "updated_at"])
+        job.resume_ingestion_summary = JobService._pull_resumes(job, user)
         return job
 
     @staticmethod

@@ -6,14 +6,17 @@ import { cn } from "../../lib/utils";
 interface StatCardProps {
   label: string;
   value: number;
-  growth: number;
+  // Optional: the backend has no period-over-period comparison endpoint,
+  // so real data can't populate this. Omit it rather than fabricate a
+  // trend — the badge just doesn't render when it's undefined.
+  growth?: number;
   icon: string;
   delay?: number;
 }
 
 export function StatCard({ label, value, growth, icon, delay }: StatCardProps) {
   const Icon = (Icons[icon as keyof typeof Icons] as LucideIcon) ?? Icons.Circle;
-  const isPositive = growth >= 0;
+  const isPositive = growth !== undefined && growth >= 0;
 
   return (
     <GlassCard delay={delay} className="flex flex-col gap-3">
@@ -21,15 +24,17 @@ export function StatCard({ label, value, growth, icon, delay }: StatCardProps) {
         <span className="h-10 w-10 rounded-2xl bg-accent-blue/10 flex items-center justify-center text-accent-blue">
           <Icon size={18} />
         </span>
-        <span
-          className={cn(
-            "text-xs font-semibold px-2 py-1 rounded-full",
-            isPositive ? "bg-success/10 text-success" : "bg-danger/10 text-danger"
-          )}
-        >
-          {isPositive ? "+" : ""}
-          {growth}%
-        </span>
+        {growth !== undefined && (
+          <span
+            className={cn(
+              "text-xs font-semibold px-2 py-1 rounded-full",
+              isPositive ? "bg-success/10 text-success" : "bg-danger/10 text-danger"
+            )}
+          >
+            {isPositive ? "+" : ""}
+            {growth}%
+          </span>
+        )}
       </div>
       <div>
         <p className="text-2xl font-bold text-ink">{value.toLocaleString()}</p>

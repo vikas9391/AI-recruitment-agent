@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     'apps.communications.apps.CommunicationsConfig',
     'apps.dashboard.apps.DashboardConfig',
     'apps.common.apps.CommonConfig',
+    'apps.mailbox.apps.MailboxConfig',
 ]
 
 MIDDLEWARE = [
@@ -190,3 +191,13 @@ EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True") == "True"
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "no-reply@workforceiq.com")
+
+# Gmail API — used by apps.mailbox to auto-pull resume emails per job.
+# Create an OAuth 2.0 Client ID (Web application) in Google Cloud Console
+# with this redirect URI registered exactly, then set these three env vars.
+GMAIL_CLIENT_ID = os.environ.get("GMAIL_CLIENT_ID", "")
+GMAIL_CLIENT_SECRET = os.environ.get("GMAIL_CLIENT_SECRET", "")
+GMAIL_REDIRECT_URI = os.environ.get(
+    "GMAIL_REDIRECT_URI", "http://localhost:8000/api/mailbox/oauth2callback/"
+)
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")

@@ -382,14 +382,19 @@ class ApplicationService:
 
     @staticmethod
     @transaction.atomic
-    def apply_for_job(data: Dict[str, Any]) -> "Application":
+    def apply_for_job(data: Dict[str, Any], skip_status_check: bool = False) -> "Application":
         from apps.jobs.models import Job
         from .models import Application, Candidate, Resume
 
         job = Job.objects.filter(id=data["job_id"]).first()
         if not job:
             raise NotFound("Job not found.")
-        if job.status != Job.Status.OPEN:
+        # The public "Apply" form must only accept applications for OPEN
+        # jobs. Inbound mailbox ingestion is HR-initiated (triggered by
+        # job creation itself) and intentionally bypasses this — a resume
+        # already sitting in the inbox should be captured regardless of
+        # whether HR has flipped the job to OPEN yet.
+        if not skip_status_check and job.status != Job.Status.OPEN:
             raise ValidationError("This job is not currently accepting applications.")
 
         candidate, _ = Candidate.objects.update_or_create(

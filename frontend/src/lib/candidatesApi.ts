@@ -5,7 +5,9 @@ type BackendStatus =
   | "APPLIED" | "PROCESSING" | "UNDER_REVIEW" | "SHORTLISTED"
   | "REJECTED" | "REJECTED_MANDATORY_SKILLS" | "FAILED" | "HIRED" | "WITHDRAWN";
 
-const STATUS_TO_UI: Record<BackendStatus, CandidateStatus> = {
+// Exported so other consumers of the same Application resource (e.g. the
+// dashboard) can map the identical backend status enum without redefining it.
+export const STATUS_TO_UI: Record<BackendStatus, CandidateStatus> = {
   APPLIED: "Applied",
   PROCESSING: "Processing",
   UNDER_REVIEW: "Under Review",
@@ -72,7 +74,16 @@ function mapListItem(raw: BackendApplicationList): CandidateListItem {
   };
 }
 
-export async function fetchCandidates(params?: { search?: string; status?: string; job?: string; page?: number }) {
+export async function fetchCandidates(params?: {
+  search?: string;
+  status?: string;
+  job?: string;
+  page?: number;
+  // Passed straight through to DRF's `ordering=` query param, e.g.
+  // "-score__overall_score" for highest-matched first. Used by the
+  // dashboard's "Top Candidates" widget.
+  ordering?: string;
+}) {
   const { data } = await apiClient.get<ApiEnvelope<PaginatedResult<BackendApplicationList>>>(
     "/recruitment/applications/",
     { params }

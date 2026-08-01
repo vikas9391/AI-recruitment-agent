@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ResponsiveContainer,
@@ -18,26 +19,36 @@ import {
   FileText,
   Star,
   Users,
-  Send,
-  CheckCircle2,
+  UserCheck,
+  Gauge,
   TrendingUp,
-  UserPlus,
-  ClipboardCheck,
-  CalendarCheck,
-  BadgeCheck,
+  Loader,
+  Search,
+  XCircle,
+  AlertTriangle,
+  MinusCircle,
+  type LucideIcon,
 } from "lucide-react";
 import { DashboardLayout } from "../../components/layout/DashboardLayout";
 import {
-  summaryStats,
-  applicationsPerMonth,
-  hiringFunnel,
-  candidatesByDepartment,
-  matchScoreDistribution,
-  assessmentCompletion,
-  interviewSuccessRate,
-  recentActivity,
-  type ActivityItem,
-} from "../../constants/analyticsMockData";
+  fetchDashboardOverview,
+  fetchApplicationsTimeline,
+  fetchDepartmentDistribution,
+  fetchScreeningAnalytics,
+  fetchCandidateAnalytics,
+  fetchRecentApplications,
+  buildHiringFunnel,
+} from "../../lib/dashboardApi";
+import { formatRelativeTime } from "../../lib/utils";
+import type {
+  CandidateAnalytics,
+  DashboardKPIs,
+  DepartmentDistributionItem,
+  FunnelStage,
+  RecentApplicationItem,
+  ScreeningAnalytics,
+  TimelinePoint,
+} from "../../types/dashboard";
 
 const CHART_COLORS = ["#111827", "#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6"];
 
@@ -87,21 +98,105 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
   );
 }
 
-const ACTIVITY_ICON: Record<ActivityItem["type"], typeof UserPlus> = {
-  "Candidate Applied": UserPlus,
-  "Assessment Completed": ClipboardCheck,
-  "Interview Scheduled": CalendarCheck,
-  "Offer Approved": BadgeCheck,
+// Derived from current application status, same reasoning as ActivityCard:
+// the backend has no typed activity/event log, only a status per
+// application, so the icon/color come from that status.
+const ACTIVITY_ICON: Record<string, LucideIcon> = {
+  Applied: FileText,
+  Processing: Loader,
+  "Under Review": Search,
+  Shortlisted: Star,
+  Rejected: XCircle,
+  Failed: AlertTriangle,
+  Hired: UserCheck,
+  Withdrawn: MinusCircle,
 };
 
-const ACTIVITY_COLOR: Record<ActivityItem["type"], string> = {
-  "Candidate Applied": "text-accent-blue bg-accent-blue/10",
-  "Assessment Completed": "text-warning bg-warning/10",
-  "Interview Scheduled": "text-ink bg-ink/5",
-  "Offer Approved": "text-success bg-success/10",
+const ACTIVITY_COLOR: Record<string, string> = {
+  Applied: "text-accent-blue bg-accent-blue/10",
+  Processing: "text-ink bg-ink/5",
+  "Under Review": "text-warning bg-warning/10",
+  Shortlisted: "text-accent-purple bg-accent-purple/10",
+  Rejected: "text-danger bg-danger/10",
+  Failed: "text-danger bg-danger/10",
+  Hired: "text-success bg-success/10",
+  Withdrawn: "text-ink-secondary bg-ink/5",
 };
 
 export default function Analytics() {
+  const [loading, setLoading] = useState(true);
+  const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
+  const [timeline, setTimeline] = useState<TimelinePoint[]>([]);
+  const [funnel, setFunnel] = useState<FunnelStage[]>([]);
+  const [departments, setDepartments] = useState<DepartmentDistributionItem[]>([]);
+  const [screening, setScreening] = useState<ScreeningAnalytics | null>(null);
+  const [candidateAnalytics, setCandidateAnalytics] = useState<CandidateAnalytics | null>(null);
+  const [recentActivity, setRecentActivity] = useState<RecentApplicationItem[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      fetchDashboardOverview(),
+      fetchApplicationsTimeline({ granularity: "month" }),
+      fetchDepartmentDistribution(),
+      fetchScreeningAnalytics(),
+      fetchCandidateAnalytics(),
+      fetchRecentApplications(8),
+    ])
+      .then(([kpiData, timelineData, departmentData, screeningData, candidateData, activityData]) => {
+        if (cancelled) return;
+        setKpis(kpiData);
+        setTimeline(timelineData);
+        setFunnel(buildHiringFunnel(kpiData));
+        setDepartments(departmentData);
+        setScreening(screeningData);
+        setCandidateAnalytics(candidateData);
+        setRecentActivity(activityData);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Approximation: the screening endpoint returns a pass *rate*, not raw
+  // passed/failed counts, so this backs out counts from the rate and the
+  // total analyzed. Exact counts would need the backend to return
+  // `passed_mandatory`/`total_analyzed` directly instead of just the
+  // percentage — flagging that as a nice-to-have rather than blocking on it.
+  const mandatorySkillsPie = screening
+    ? (() => {
+        const passed = Math.round((screening.mandatorySkillsPassRatePercentage / 100) * screening.totalResumesAnalyzed);
+        const failed = Math.max(screening.totalResumesAnalyzed - passed, 0);
+        return [
+          { name: "Passed", value: passed },
+          { name: "Failed", value: failed },
+        ];
+      })()
+    : [];
+
+  if (loading || !kpis || !screening || !candidateAnalytics) {
+    return (
+      <DashboardLayout pageTitle="Analytics">
+        <div className="space-y-4">
+          <div className="h-16 rounded-2xl bg-ink/5 animate-pulse" />
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-[72px] rounded-2xl bg-ink/5 animate-pulse" />
+            ))}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-64 rounded-2xl bg-ink/5 animate-pulse" />
+            ))}
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   return (
     <DashboardLayout pageTitle="Analytics">
       <div className="space-y-4">
@@ -112,33 +207,35 @@ export default function Analytics() {
           </p>
         </div>
 
-        {/* Summary cards */}
+        {/* Summary cards — real KPIs. No "Offers Sent/Accepted" cards since
+            the backend has no offer concept yet; replaced with average
+            resume score and shortlist rate, both real. */}
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-          <SummaryCard icon={FileText} label="Total Applications" value={summaryStats.totalApplications} />
-          <SummaryCard icon={Star} label="Shortlisted" value={summaryStats.shortlisted} />
-          <SummaryCard icon={Users} label="Interviews" value={summaryStats.interviews} />
-          <SummaryCard icon={Send} label="Offers Sent" value={summaryStats.offersSent} />
-          <SummaryCard icon={CheckCircle2} label="Offers Accepted" value={summaryStats.offersAccepted} />
-          <SummaryCard icon={TrendingUp} label="Hiring Rate" value={summaryStats.hiringRate} suffix="%" />
+          <SummaryCard icon={FileText} label="Total Applications" value={kpis.totalApplications} />
+          <SummaryCard icon={Star} label="Shortlisted" value={kpis.shortlistedApplications} />
+          <SummaryCard icon={Users} label="Interviews" value={kpis.interviewsScheduled} />
+          <SummaryCard icon={UserCheck} label="Hired" value={kpis.hiredApplications} />
+          <SummaryCard icon={Gauge} label="Avg Resume Score" value={Math.round(kpis.averageResumeScore)} />
+          <SummaryCard icon={TrendingUp} label="Shortlist Rate" value={kpis.shortlistRatePercentage} suffix="%" />
         </div>
 
         {/* Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <ChartCard title="Applications per Month">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={applicationsPerMonth}>
+              <LineChart data={timeline}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                <XAxis dataKey="label" tick={{ fontSize: 12 }} />
                 <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip />
-                <Line type="monotone" dataKey="applications" stroke="#111827" strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="count" stroke="#111827" strokeWidth={2} dot={{ r: 3 }} />
               </LineChart>
             </ResponsiveContainer>
           </ChartCard>
 
           <ChartCard title="Hiring Funnel">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={hiringFunnel} layout="vertical" margin={{ left: 24 }}>
+              <BarChart data={funnel} layout="vertical" margin={{ left: 24 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 <XAxis type="number" tick={{ fontSize: 12 }} />
                 <YAxis type="category" dataKey="stage" tick={{ fontSize: 12 }} width={100} />
@@ -148,23 +245,23 @@ export default function Analytics() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Candidates by Department">
+          <ChartCard title="Applications by Department">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={candidatesByDepartment}>
+              <BarChart data={departments}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 <XAxis dataKey="department" tick={{ fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={60} />
                 <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip />
-                <Bar dataKey="candidates" fill="#10B981" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="applicationCount" fill="#10B981" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
 
           <ChartCard title="AI Match Score Distribution">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={matchScoreDistribution}>
+              <BarChart data={screening.scoreDistribution}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis dataKey="range" tick={{ fontSize: 11 }} />
+                <XAxis dataKey="bucket" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip />
                 <Bar dataKey="count" fill="#F59E0B" radius={[6, 6, 0, 0]} />
@@ -172,11 +269,11 @@ export default function Analytics() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Assessment Completion Rate">
+          <ChartCard title="Mandatory Skills Pass Rate">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={assessmentCompletion}
+                  data={mandatorySkillsPie}
                   dataKey="value"
                   nameKey="name"
                   cx="50%"
@@ -185,7 +282,7 @@ export default function Analytics() {
                   outerRadius={80}
                   paddingAngle={2}
                 >
-                  {assessmentCompletion.map((_, i) => (
+                  {mandatorySkillsPie.map((_, i) => (
                     <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
                   ))}
                 </Pie>
@@ -195,15 +292,15 @@ export default function Analytics() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Interview Success Rate">
+          <ChartCard title="Top Candidate Skills">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={interviewSuccessRate}>
+              <BarChart data={candidateAnalytics.topSkills} layout="vertical" margin={{ left: 24 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} unit="%" />
+                <XAxis type="number" tick={{ fontSize: 12 }} />
+                <YAxis type="category" dataKey="skill" tick={{ fontSize: 11 }} width={100} />
                 <Tooltip />
-                <Line type="monotone" dataKey="successRate" stroke="#8B5CF6" strokeWidth={2} dot={{ r: 3 }} />
-              </LineChart>
+                <Bar dataKey="count" fill="#8B5CF6" radius={[0, 6, 6, 0]} />
+              </BarChart>
             </ResponsiveContainer>
           </ChartCard>
         </div>
@@ -212,33 +309,41 @@ export default function Analytics() {
         <div className="glass-card p-5">
           <h3 className="text-sm font-semibold text-ink mb-4">Recent Activity</h3>
           <div className="space-y-4">
-            {recentActivity.map((item, i) => {
-              const Icon = ACTIVITY_ICON[item.type];
-              return (
-                <motion.div
-                  key={item.id}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.25, delay: i * 0.04 }}
-                  className="flex items-start gap-3"
-                >
-                  <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${ACTIVITY_COLOR[item.type]}`}>
-                    <Icon size={14} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-ink">
-                      <span className="font-medium">{item.candidateName}</span> — {item.type}
-                    </p>
-                    <p className="text-xs text-ink-secondary">{item.detail}</p>
-                  </div>
-                  <span className="text-xs text-ink-secondary whitespace-nowrap">{item.timestamp}</span>
-                </motion.div>
-              );
-            })}
+            {recentActivity.length === 0 ? (
+              <p className="text-sm text-ink-secondary">No recent activity yet.</p>
+            ) : (
+              recentActivity.map((item, i) => {
+                const Icon = ACTIVITY_ICON[item.status] ?? FileText;
+                return (
+                  <motion.div
+                    key={item.id}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.25, delay: i * 0.04 }}
+                    className="flex items-start gap-3"
+                  >
+                    <div
+                      className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${
+                        ACTIVITY_COLOR[item.status] ?? "text-ink-secondary bg-ink/5"
+                      }`}
+                    >
+                      <Icon size={14} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-ink">
+                        <span className="font-medium">{item.candidateName}</span> — {item.status}
+                      </p>
+                      <p className="text-xs text-ink-secondary">Applied for {item.jobTitle}</p>
+                    </div>
+                    <span className="text-xs text-ink-secondary whitespace-nowrap">
+                      {formatRelativeTime(item.appliedAt)}
+                    </span>
+                  </motion.div>
+                );
+              })
+            )}
           </div>
         </div>
-
-        {/* TODO: Backend Integration */}
       </div>
     </DashboardLayout>
   );

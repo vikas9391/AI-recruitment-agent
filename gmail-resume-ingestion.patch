@@ -1,0 +1,848 @@
+diff --git a/backend/apps/jobs/services.py b/backend/apps/jobs/services.py
+index d375319..3842608 100644
+--- a/backend/apps/jobs/services.py
++++ b/backend/apps/jobs/services.py
+@@ -1,3 +1,4 @@
++import logging
+ from typing import Any, Dict
+ 
+ from django.db import transaction
+@@ -6,6 +7,8 @@ from rest_framework.exceptions import NotFound, ValidationError
+ 
+ from .models import Job
+ 
++logger = logging.getLogger(__name__)
++
+ 
+ class JobService:
+ 
+@@ -17,8 +20,24 @@ class JobService:
+         # another company's id.
+         data.pop("company", None)
+         job = Job.objects.create(created_by=user, company=user.company, **data)
++
++        # Synchronous inbox pull: if this job was created already OPEN and
++        # the company has a connected Gmail mailbox, immediately screen any
++        # matching resume emails waiting in the inbox. Never blocks or
++        # fails job creation — failures/summary are attached to the
++        # instance for the view/serializer to surface.
++        job.resume_ingestion_summary = JobService._pull_resumes(job, user)
+         return job
+ 
++    @staticmethod
++    def _pull_resumes(job: Job, user) -> Dict[str, Any]:
++        try:
++            from apps.mailbox.services import ResumeIngestionService
++            return ResumeIngestionService.pull_resumes_for_job(job, user)
++        except Exception as exc:  # noqa: BLE001 — mailbox issues must never break job creation
++            logger.exception("Resume ingestion failed for job %s", job.id)
++            return {"attempted": False, "found": 0, "created": 0, "skipped": 0, "failed": 0, "errors": [str(exc)]}
++
+     @staticmethod
+     @transaction.atomic
+     def update_job(job_id: int, data: Dict[str, Any], user) -> Job:
+@@ -88,6 +107,7 @@ class JobService:
+             raise ValidationError("Job is already open.")
+         job.status = Job.Status.OPEN
+         job.save(update_fields=["status", "updated_at"])
++        job.resume_ingestion_summary = JobService._pull_resumes(job, user)
+         return job
+ 
+     @staticmethod
+diff --git a/backend/apps/jobs/views.py b/backend/apps/jobs/views.py
+index 263ecbb..064c620 100644
+--- a/backend/apps/jobs/views.py
++++ b/backend/apps/jobs/views.py
+@@ -42,7 +42,8 @@ class JobViewSet(viewsets.ViewSet):
+         serializer.is_valid(raise_exception=True)
+         job = JobService.create_job(serializer.validated_data, request.user)
+         response_serializer = JobDetailSerializer(job)
+-        return api_response(True, "Job created successfully.", response_serializer.data, status.HTTP_201_CREATED)
++        data = {**response_serializer.data, "resume_ingestion": getattr(job, "resume_ingestion_summary", None)}
++        return api_response(True, "Job created successfully.", data, status.HTTP_201_CREATED)
+ 
+     def update(self, request, pk=None):
+         job = JobService.get_job(int(pk), request.user)
+@@ -68,7 +69,8 @@ class JobViewSet(viewsets.ViewSet):
+     def open_job(self, request, pk=None):
+         job = JobService.open_job(int(pk), request.user)
+         serializer = JobDetailSerializer(job)
+-        return api_response(True, "Job opened successfully.", serializer.data, status.HTTP_200_OK)
++        data = {**serializer.data, "resume_ingestion": getattr(job, "resume_ingestion_summary", None)}
++        return api_response(True, "Job opened successfully.", data, status.HTTP_200_OK)
+ 
+     @action(detail=True, methods=["post"], url_path="close")
+     def close_job(self, request, pk=None):
+diff --git a/backend/apps/mailbox/__init__.py b/backend/apps/mailbox/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/backend/apps/mailbox/admin.py b/backend/apps/mailbox/admin.py
+new file mode 100644
+index 0000000..67e2af4
+--- /dev/null
++++ b/backend/apps/mailbox/admin.py
+@@ -0,0 +1,18 @@
++from django.contrib import admin
++
++from .models import GmailAccount, ProcessedResumeEmail
++
++
++@admin.register(GmailAccount)
++class GmailAccountAdmin(admin.ModelAdmin):
++    list_display = ("gmail_address", "company", "is_active", "last_synced_at")
++    list_filter = ("is_active",)
++    search_fields = ("gmail_address", "company__company_name")
++    readonly_fields = ("refresh_token", "created_at", "updated_at")
++
++
++@admin.register(ProcessedResumeEmail)
++class ProcessedResumeEmailAdmin(admin.ModelAdmin):
++    list_display = ("gmail_message_id", "job", "sender_email", "status", "created_at")
++    list_filter = ("status",)
++    search_fields = ("gmail_message_id", "sender_email", "job__title")
+diff --git a/backend/apps/mailbox/apps.py b/backend/apps/mailbox/apps.py
+new file mode 100644
+index 0000000..739f7e5
+--- /dev/null
++++ b/backend/apps/mailbox/apps.py
+@@ -0,0 +1,6 @@
++from django.apps import AppConfig
++
++
++class MailboxConfig(AppConfig):
++    default_auto_field = "django.db.models.BigAutoField"
++    name = "apps.mailbox"
+diff --git a/backend/apps/mailbox/migrations/0001_initial.py b/backend/apps/mailbox/migrations/0001_initial.py
+new file mode 100644
+index 0000000..05f2df2
+--- /dev/null
++++ b/backend/apps/mailbox/migrations/0001_initial.py
+@@ -0,0 +1,88 @@
++import django.db.models.deletion
++from django.db import migrations, models
++
++
++class Migration(migrations.Migration):
++
++    initial = True
++
++    dependencies = [
++        ("authentication", "0001_initial"),
++        ("jobs", "0001_initial"),
++        ("recruitment", "0001_initial"),
++    ]
++
++    operations = [
++        migrations.CreateModel(
++            name="GmailAccount",
++            fields=[
++                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
++                ("gmail_address", models.EmailField(max_length=254)),
++                ("refresh_token", models.TextField()),
++                ("is_active", models.BooleanField(default=True)),
++                ("last_synced_at", models.DateTimeField(blank=True, null=True)),
++                ("created_at", models.DateTimeField(auto_now_add=True)),
++                ("updated_at", models.DateTimeField(auto_now=True)),
++                (
++                    "company",
++                    models.OneToOneField(
++                        on_delete=django.db.models.deletion.CASCADE,
++                        related_name="gmail_account",
++                        to="authentication.company",
++                    ),
++                ),
++            ],
++            options={
++                "db_table": "gmail_accounts",
++                "verbose_name": "Gmail Account",
++                "verbose_name_plural": "Gmail Accounts",
++            },
++        ),
++        migrations.CreateModel(
++            name="ProcessedResumeEmail",
++            fields=[
++                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
++                ("gmail_message_id", models.CharField(max_length=100)),
++                ("sender_email", models.EmailField(blank=True, max_length=254)),
++                (
++                    "status",
++                    models.CharField(
++                        choices=[("INGESTED", "Ingested"), ("SKIPPED", "Skipped"), ("FAILED", "Failed")],
++                        default="INGESTED",
++                        max_length=20,
++                    ),
++                ),
++                ("detail", models.CharField(blank=True, max_length=255)),
++                ("created_at", models.DateTimeField(auto_now_add=True)),
++                (
++                    "application",
++                    models.ForeignKey(
++                        blank=True,
++                        null=True,
++                        on_delete=django.db.models.deletion.SET_NULL,
++                        related_name="source_email",
++                        to="recruitment.application",
++                    ),
++                ),
++                (
++                    "job",
++                    models.ForeignKey(
++                        on_delete=django.db.models.deletion.CASCADE,
++                        related_name="processed_resume_emails",
++                        to="jobs.job",
++                    ),
++                ),
++            ],
++            options={"db_table": "processed_resume_emails"},
++        ),
++        migrations.AddIndex(
++            model_name="processedresumeemail",
++            index=models.Index(fields=["job", "gmail_message_id"], name="processed_r_job_id_27c038_idx"),
++        ),
++        migrations.AddConstraint(
++            model_name="processedresumeemail",
++            constraint=models.UniqueConstraint(
++                fields=("job", "gmail_message_id"), name="unique_job_gmail_message"
++            ),
++        ),
++    ]
+diff --git a/backend/apps/mailbox/migrations/__init__.py b/backend/apps/mailbox/migrations/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/backend/apps/mailbox/models.py b/backend/apps/mailbox/models.py
+new file mode 100644
+index 0000000..f085384
+--- /dev/null
++++ b/backend/apps/mailbox/models.py
+@@ -0,0 +1,84 @@
++from django.db import models
++
++from apps.authentication.models.company_model import Company
++
++
++class GmailAccount(models.Model):
++    """
++    Stores the OAuth2 refresh token for the company mailbox that is
++    monitored for inbound resume emails. One mailbox per company.
++
++    The refresh token is the only long-lived secret we keep — access
++    tokens are minted on demand and never persisted.
++    """
++
++    company = models.OneToOneField(
++        Company,
++        on_delete=models.CASCADE,
++        related_name="gmail_account",
++    )
++    gmail_address = models.EmailField()
++    refresh_token = models.TextField()
++    is_active = models.BooleanField(default=True)
++
++    # Gmail's historyId lets us do incremental sync later; for now we
++    # just track the id of the last message we successfully ingested
++    # per job so re-running ingestion doesn't duplicate applications.
++    last_synced_at = models.DateTimeField(null=True, blank=True)
++
++    created_at = models.DateTimeField(auto_now_add=True)
++    updated_at = models.DateTimeField(auto_now=True)
++
++    class Meta:
++        db_table = "gmail_accounts"
++        verbose_name = "Gmail Account"
++        verbose_name_plural = "Gmail Accounts"
++
++    def __str__(self) -> str:
++        return f"{self.gmail_address} ({self.company.company_name})"
++
++
++class ProcessedResumeEmail(models.Model):
++    """
++    Idempotency guard. Records every Gmail message id we've already
++    turned into an Application for a given job, so re-triggering
++    ingestion (e.g. re-opening a job) never creates duplicates.
++    """
++
++    job = models.ForeignKey(
++        "jobs.Job",
++        on_delete=models.CASCADE,
++        related_name="processed_resume_emails",
++    )
++    gmail_message_id = models.CharField(max_length=100)
++    sender_email = models.EmailField(blank=True)
++    application = models.ForeignKey(
++        "recruitment.Application",
++        on_delete=models.SET_NULL,
++        null=True,
++        blank=True,
++        related_name="source_email",
++    )
++    status = models.CharField(
++        max_length=20,
++        choices=[
++            ("INGESTED", "Ingested"),
++            ("SKIPPED", "Skipped"),
++            ("FAILED", "Failed"),
++        ],
++        default="INGESTED",
++    )
++    detail = models.CharField(max_length=255, blank=True)
++    created_at = models.DateTimeField(auto_now_add=True)
++
++    class Meta:
++        db_table = "processed_resume_emails"
++        constraints = [
++            models.UniqueConstraint(
++                fields=["job", "gmail_message_id"], name="unique_job_gmail_message"
++            )
++        ]
++        indexes = [models.Index(fields=["job", "gmail_message_id"])]
++
++    def __str__(self) -> str:
++        return f"{self.gmail_message_id} -> job {self.job_id} [{self.status}]"
+diff --git a/backend/apps/mailbox/serializers.py b/backend/apps/mailbox/serializers.py
+new file mode 100644
+index 0000000..47b54f4
+--- /dev/null
++++ b/backend/apps/mailbox/serializers.py
+@@ -0,0 +1,9 @@
++from rest_framework import serializers
++
++from .models import GmailAccount
++
++
++class GmailAccountStatusSerializer(serializers.ModelSerializer):
++    class Meta:
++        model = GmailAccount
++        fields = ["gmail_address", "is_active", "last_synced_at", "created_at"]
+diff --git a/backend/apps/mailbox/services.py b/backend/apps/mailbox/services.py
+new file mode 100644
+index 0000000..0931e08
+--- /dev/null
++++ b/backend/apps/mailbox/services.py
+@@ -0,0 +1,323 @@
++import base64
++import logging
++import re
++from email.utils import parseaddr
++from typing import Any, Dict, List, Optional
++
++from django.conf import settings
++from django.core.files.base import ContentFile
++from django.utils import timezone
++from rest_framework.exceptions import ValidationError
++
++from google.oauth2.credentials import Credentials
++from google_auth_oauthlib.flow import Flow
++from googleapiclient.discovery import build
++from googleapiclient.errors import HttpError
++
++from .models import GmailAccount, ProcessedResumeEmail
++
++logger = logging.getLogger(__name__)
++
++GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
++ALLOWED_RESUME_EXTENSIONS = ("pdf", "docx")
++MAX_MESSAGES_PER_RUN = 25
++PROCESSED_LABEL_NAME = "AI-Recruiter/Processed"
++
++
++# --------------------------------------------------------------------------- #
++# OAuth connect flow — one-time, per company, done by an HR Admin.
++# --------------------------------------------------------------------------- #
++class GmailOAuthService:
++
++    @staticmethod
++    def _client_config() -> Dict[str, Any]:
++        return {
++            "web": {
++                "client_id": settings.GMAIL_CLIENT_ID,
++                "client_secret": settings.GMAIL_CLIENT_SECRET,
++                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
++                "token_uri": "https://oauth2.googleapis.com/token",
++                "redirect_uris": [settings.GMAIL_REDIRECT_URI],
++            }
++        }
++
++    @staticmethod
++    def get_authorization_url(state: str) -> str:
++        flow = Flow.from_client_config(
++            GmailOAuthService._client_config(),
++            scopes=GMAIL_SCOPES,
++            redirect_uri=settings.GMAIL_REDIRECT_URI,
++        )
++        auth_url, _ = flow.authorization_url(
++            access_type="offline",
++            include_granted_scopes="true",
++            prompt="consent",  # forces a refresh_token even on re-consent
++            state=state,
++        )
++        return auth_url
++
++    @staticmethod
++    def exchange_code(code: str, company) -> GmailAccount:
++        flow = Flow.from_client_config(
++            GmailOAuthService._client_config(),
++            scopes=GMAIL_SCOPES,
++            redirect_uri=settings.GMAIL_REDIRECT_URI,
++        )
++        flow.fetch_token(code=code)
++        credentials = flow.credentials
++
++        if not credentials.refresh_token:
++            raise ValidationError(
++                "Google did not return a refresh token. Revoke this app's access at "
++                "https://myaccount.google.com/permissions and try connecting again."
++            )
++
++        service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
++        profile = service.users().getProfile(userId="me").execute()
++        gmail_address = profile["emailAddress"]
++
++        account, _ = GmailAccount.objects.update_or_create(
++            company=company,
++            defaults={
++                "gmail_address": gmail_address,
++                "refresh_token": credentials.refresh_token,
++                "is_active": True,
++            },
++        )
++        return account
++
++
++# --------------------------------------------------------------------------- #
++# Authenticated Gmail API client for a company's mailbox.
++# --------------------------------------------------------------------------- #
++class GmailClient:
++
++    def __init__(self, gmail_account: GmailAccount):
++        self.account = gmail_account
++        credentials = Credentials(
++            token=None,
++            refresh_token=gmail_account.refresh_token,
++            token_uri="https://oauth2.googleapis.com/token",
++            client_id=settings.GMAIL_CLIENT_ID,
++            client_secret=settings.GMAIL_CLIENT_SECRET,
++            scopes=GMAIL_SCOPES,
++        )
++        self.service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
++
++    def ensure_processed_label(self) -> str:
++        labels = self.service.users().labels().list(userId="me").execute().get("labels", [])
++        existing = next((l for l in labels if l["name"] == PROCESSED_LABEL_NAME), None)
++        if existing:
++            return existing["id"]
++        created = (
++            self.service.users()
++            .labels()
++            .create(
++                userId="me",
++                body={
++                    "name": PROCESSED_LABEL_NAME,
++                    "labelListVisibility": "labelShow",
++                    "messageListVisibility": "show",
++                },
++            )
++            .execute()
++        )
++        return created["id"]
++
++    def search_messages(self, query: str, max_results: int) -> List[Dict[str, Any]]:
++        results = (
++            self.service.users()
++            .messages()
++            .list(userId="me", q=query, maxResults=max_results)
++            .execute()
++        )
++        return results.get("messages", [])
++
++    def get_message(self, message_id: str) -> Dict[str, Any]:
++        return (
++            self.service.users()
++            .messages()
++            .get(userId="me", id=message_id, format="full")
++            .execute()
++        )
++
++    def get_attachment(self, message_id: str, attachment_id: str) -> bytes:
++        attachment = (
++            self.service.users()
++            .messages()
++            .attachments()
++            .get(userId="me", messageId=message_id, id=attachment_id)
++            .execute()
++        )
++        return base64.urlsafe_b64decode(attachment["data"])
++
++    def mark_processed(self, message_id: str, label_id: str) -> None:
++        self.service.users().messages().modify(
++            userId="me",
++            id=message_id,
++            body={"removeLabelIds": ["UNREAD"], "addLabelIds": [label_id]},
++        ).execute()
++
++
++# --------------------------------------------------------------------------- #
++# Resume ingestion — the synchronous, job-creation-triggered pipeline.
++# --------------------------------------------------------------------------- #
++class ResumeIngestionService:
++
++    @staticmethod
++    def _build_query(job) -> str:
++        """
++        Matches unread mail with an attachment, sent after the job was
++        created, whose subject references the role. Candidates are asked
++        to put the job title (or "Job ID <id>") in the subject line — the
++        same convention referenced on the careers page / job posting.
++        """
++        after_ts = int(job.created_at.timestamp())
++        title_terms = " OR ".join(
++            f'subject:"{term}"' for term in ResumeIngestionService._subject_terms(job)
++        )
++        return f'is:unread has:attachment after:{after_ts} ({title_terms})'
++
++    @staticmethod
++    def _subject_terms(job) -> List[str]:
++        terms = [job.title, f"Job ID {job.id}", f"#{job.id}"]
++        return [t for t in terms if t]
++
++    @staticmethod
++    def _extract_sender(headers: List[Dict[str, str]]) -> tuple:
++        raw_from = next((h["value"] for h in headers if h["name"].lower() == "from"), "")
++        display_name, email_address = parseaddr(raw_from)
++        if not display_name:
++            display_name = email_address.split("@")[0] if email_address else "Candidate"
++        parts = display_name.strip().split(" ", 1)
++        first_name = parts[0] if parts else "Candidate"
++        last_name = parts[1] if len(parts) > 1 else ""
++        return first_name, last_name, email_address
++
++    @staticmethod
++    def _extract_resume_attachment(gmail: "GmailClient", message: Dict[str, Any]) -> Optional[ContentFile]:
++        def walk(parts):
++            for part in parts:
++                filename = part.get("filename") or ""
++                if filename:
++                    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
++                    if ext in ALLOWED_RESUME_EXTENSIONS:
++                        body = part.get("body", {})
++                        attachment_id = body.get("attachmentId")
++                        if attachment_id:
++                            data = gmail.get_attachment(message["id"], attachment_id)
++                            return ContentFile(data, name=filename)
++                if part.get("parts"):
++                    found = walk(part["parts"])
++                    if found:
++                        return found
++            return None
++
++        payload = message.get("payload", {})
++        return walk(payload.get("parts", []) or [])
++
++    @staticmethod
++    def pull_resumes_for_job(job, user=None) -> Dict[str, Any]:
++        """
++        Synchronous entrypoint. Called right after a job is created (or
++        reopened). Looks at the company's connected Gmail mailbox, finds
++        unread resume emails matching this job, and turns each one into
++        a screened Application — reusing the exact same pipeline the
++        public "Apply" form uses.
++
++        Never raises: ingestion problems are logged and summarized in the
++        returned dict so a broken mailbox connection can never block job
++        creation itself.
++        """
++        summary = {"attempted": False, "found": 0, "created": 0, "skipped": 0, "failed": 0, "errors": []}
++
++        gmail_account = GmailAccount.objects.filter(company=job.company, is_active=True).first()
++        if not gmail_account:
++            summary["errors"].append("No active Gmail account connected for this company.")
++            return summary
++
++        summary["attempted"] = True
++
++        try:
++            gmail = GmailClient(gmail_account)
++            label_id = gmail.ensure_processed_label()
++            query = ResumeIngestionService._build_query(job)
++            messages = gmail.search_messages(query, MAX_MESSAGES_PER_RUN)
++            summary["found"] = len(messages)
++        except HttpError as exc:
++            logger.exception("Gmail API error while searching mailbox for job %s", job.id)
++            summary["errors"].append(f"Gmail API error: {exc}")
++            return summary
++        except Exception as exc:  # noqa: BLE001 — never let mailbox issues break job creation
++            logger.exception("Unexpected error connecting to Gmail for job %s", job.id)
++            summary["errors"].append(str(exc))
++            return summary
++
++        from apps.recruitment.services import ApplicationService
++
++        for message_stub in messages:
++            message_id = message_stub["id"]
++
++            if ProcessedResumeEmail.objects.filter(job=job, gmail_message_id=message_id).exists():
++                summary["skipped"] += 1
++                continue
++
++            try:
++                message = gmail.get_message(message_id)
++                headers = message.get("payload", {}).get("headers", [])
++                first_name, last_name, sender_email = ResumeIngestionService._extract_sender(headers)
++
++                if not sender_email:
++                    ProcessedResumeEmail.objects.create(
++                        job=job, gmail_message_id=message_id, status="SKIPPED",
++                        detail="Could not parse sender email.",
++                    )
++                    summary["skipped"] += 1
++                    continue
++
++                resume_file = ResumeIngestionService._extract_resume_attachment(gmail, message)
++                if not resume_file:
++                    ProcessedResumeEmail.objects.create(
++                        job=job, gmail_message_id=message_id, sender_email=sender_email,
++                        status="SKIPPED", detail="No PDF/DOCX attachment found.",
++                    )
++                    summary["skipped"] += 1
++                    gmail.mark_processed(message_id, label_id)
++                    continue
++
++                application = ApplicationService.apply_for_job({
++                    "job_id": job.id,
++                    "first_name": first_name,
++                    "last_name": last_name,
++                    "email": sender_email,
++                    "phone": "",
++                    "cover_note": "Auto-submitted via inbox monitoring.",
++                    "resume_file": resume_file,
++                }, skip_status_check=True)
++                ApplicationService.process_application(application.id)
++
++                ProcessedResumeEmail.objects.create(
++                    job=job, gmail_message_id=message_id, sender_email=sender_email,
++                    application=application, status="INGESTED",
++                )
++                gmail.mark_processed(message_id, label_id)
++                summary["created"] += 1
++
++            except ValidationError as exc:
++                # e.g. duplicate application for this candidate+job — expected, not a failure.
++                ProcessedResumeEmail.objects.create(
++                    job=job, gmail_message_id=message_id, status="SKIPPED", detail=str(exc)[:255],
++                )
++                summary["skipped"] += 1
++            except Exception as exc:  # noqa: BLE001
++                logger.exception("Failed to ingest Gmail message %s for job %s", message_id, job.id)
++                ProcessedResumeEmail.objects.create(
++                    job=job, gmail_message_id=message_id, status="FAILED", detail=str(exc)[:255],
++                )
++                summary["failed"] += 1
++                summary["errors"].append(f"{message_id}: {exc}")
++
++        gmail_account.last_synced_at = timezone.now()
++        gmail_account.save(update_fields=["last_synced_at"])
++
++        return summary
+diff --git a/backend/apps/mailbox/urls.py b/backend/apps/mailbox/urls.py
+new file mode 100644
+index 0000000..a44a405
+--- /dev/null
++++ b/backend/apps/mailbox/urls.py
+@@ -0,0 +1,15 @@
++from django.urls import path
++
++from .views import (
++    GmailAccountStatusView,
++    GmailConnectView,
++    GmailOAuthCallbackView,
++    PullResumesView,
++)
++
++urlpatterns = [
++    path("connect/", GmailConnectView.as_view(), name="mailbox-connect"),
++    path("oauth2callback/", GmailOAuthCallbackView.as_view(), name="mailbox-oauth2callback"),
++    path("status/", GmailAccountStatusView.as_view(), name="mailbox-status"),
++    path("jobs/<int:pk>/pull-resumes/", PullResumesView.as_view(), name="mailbox-pull-resumes"),
++]
+diff --git a/backend/apps/mailbox/views.py b/backend/apps/mailbox/views.py
+new file mode 100644
+index 0000000..44f79a7
+--- /dev/null
++++ b/backend/apps/mailbox/views.py
+@@ -0,0 +1,93 @@
++from django.conf import settings
++from django.core import signing
++from django.shortcuts import redirect
++from rest_framework import status
++from rest_framework.permissions import AllowAny, IsAuthenticated
++from rest_framework.views import APIView
++
++from apps.common.utils import api_response
++from apps.jobs.permissions import IsHRAdmin
++from apps.jobs.services import JobService
++
++from .models import GmailAccount
++from .serializers import GmailAccountStatusSerializer
++from .services import GmailOAuthService, ResumeIngestionService
++
++STATE_SALT = "mailbox.gmail-oauth"
++
++
++class GmailConnectView(APIView):
++    """GET /api/mailbox/connect/ — HR Admin kicks off the Google consent flow."""
++
++    permission_classes = [IsAuthenticated, IsHRAdmin]
++
++    def get(self, request):
++        state = signing.dumps({"company_id": request.user.company_id}, salt=STATE_SALT)
++        auth_url = GmailOAuthService.get_authorization_url(state)
++        return api_response(True, "Authorization URL generated.", {"authorization_url": auth_url}, status.HTTP_200_OK)
++
++
++class GmailOAuthCallbackView(APIView):
++    """
++    GET /api/mailbox/oauth2callback/ — Google redirects the browser here
++    with ?code=...&state=.... Not authenticated via JWT (it's a browser
++    redirect from Google), so the company is recovered from the signed
++    state param instead.
++    """
++
++    permission_classes = [AllowAny]
++
++    def get(self, request):
++        from apps.authentication.models.company_model import Company
++
++        code = request.query_params.get("code")
++        state = request.query_params.get("state")
++        error = request.query_params.get("error")
++
++        frontend_base = settings.FRONTEND_URL.rstrip("/")
++
++        if error:
++            return redirect(f"{frontend_base}/settings/mailbox?status=error&reason={error}")
++        if not code or not state:
++            return redirect(f"{frontend_base}/settings/mailbox?status=error&reason=missing_params")
++
++        try:
++            payload = signing.loads(state, salt=STATE_SALT, max_age=600)
++            company = Company.objects.get(id=payload["company_id"])
++        except (signing.BadSignature, Company.DoesNotExist):
++            return redirect(f"{frontend_base}/settings/mailbox?status=error&reason=invalid_state")
++
++        try:
++            GmailOAuthService.exchange_code(code, company)
++        except Exception:  # noqa: BLE001
++            return redirect(f"{frontend_base}/settings/mailbox?status=error&reason=exchange_failed")
++
++        return redirect(f"{frontend_base}/settings/mailbox?status=connected")
++
++
++class GmailAccountStatusView(APIView):
++    """GET /api/mailbox/status/ — is a mailbox connected for my company?"""
++
++    permission_classes = [IsAuthenticated, IsHRAdmin]
++
++    def get(self, request):
++        account = GmailAccount.objects.filter(company=request.user.company).first()
++        if not account:
++            return api_response(True, "No mailbox connected.", {"connected": False}, status.HTTP_200_OK)
++        serializer = GmailAccountStatusSerializer(account)
++        return api_response(True, "Mailbox status fetched.", {"connected": True, **serializer.data}, status.HTTP_200_OK)
++
++
++class PullResumesView(APIView):
++    """
++    POST /api/mailbox/jobs/<pk>/pull-resumes/ — manual re-trigger.
++    Job creation already runs this synchronously; this exists so HR can
++    re-run it later (e.g. after connecting Gmail, or to pick up new mail).
++    """
++
++    permission_classes = [IsAuthenticated, IsHRAdmin]
++
++    def post(self, request, pk: int):
++        job = JobService.get_job(int(pk), request.user)
++        summary = ResumeIngestionService.pull_resumes_for_job(job, request.user)
++        return api_response(True, "Resume pull finished.", summary, status.HTTP_200_OK)
+diff --git a/backend/apps/recruitment/services.py b/backend/apps/recruitment/services.py
+index b590740..a5090ec 100644
+--- a/backend/apps/recruitment/services.py
++++ b/backend/apps/recruitment/services.py
+@@ -382,14 +382,19 @@ class ApplicationService:
+ 
+     @staticmethod
+     @transaction.atomic
+-    def apply_for_job(data: Dict[str, Any]) -> "Application":
++    def apply_for_job(data: Dict[str, Any], skip_status_check: bool = False) -> "Application":
+         from apps.jobs.models import Job
+         from .models import Application, Candidate, Resume
+ 
+         job = Job.objects.filter(id=data["job_id"]).first()
+         if not job:
+             raise NotFound("Job not found.")
+-        if job.status != Job.Status.OPEN:
++        # The public "Apply" form must only accept applications for OPEN
++        # jobs. Inbound mailbox ingestion is HR-initiated (triggered by
++        # job creation itself) and intentionally bypasses this — a resume
++        # already sitting in the inbox should be captured regardless of
++        # whether HR has flipped the job to OPEN yet.
++        if not skip_status_check and job.status != Job.Status.OPEN:
+             raise ValidationError("This job is not currently accepting applications.")
+ 
+         candidate, _ = Candidate.objects.update_or_create(
+diff --git a/backend/config/settings.py b/backend/config/settings.py
+index 2a3359e..b14bc90 100644
+--- a/backend/config/settings.py
++++ b/backend/config/settings.py
+@@ -50,6 +50,7 @@ INSTALLED_APPS = [
+     'apps.communications.apps.CommunicationsConfig',
+     'apps.dashboard.apps.DashboardConfig',
+     'apps.common.apps.CommonConfig',
++    'apps.mailbox.apps.MailboxConfig',
+ ]
+ 
+ MIDDLEWARE = [
+@@ -189,4 +190,14 @@ EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
+ EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+ EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+ EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True") == "True"
+-DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "no-reply@workforceiq.com")
+\ No newline at end of file
++DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "no-reply@workforceiq.com")
++
++# Gmail API — used by apps.mailbox to auto-pull resume emails per job.
++# Create an OAuth 2.0 Client ID (Web application) in Google Cloud Console
++# with this redirect URI registered exactly, then set these three env vars.
++GMAIL_CLIENT_ID = os.environ.get("GMAIL_CLIENT_ID", "")
++GMAIL_CLIENT_SECRET = os.environ.get("GMAIL_CLIENT_SECRET", "")
++GMAIL_REDIRECT_URI = os.environ.get(
++    "GMAIL_REDIRECT_URI", "http://localhost:8000/api/mailbox/oauth2callback/"
++)
++FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+\ No newline at end of file
+diff --git a/backend/config/urls.py b/backend/config/urls.py
+index a87ebed..2c5473a 100644
+--- a/backend/config/urls.py
++++ b/backend/config/urls.py
+@@ -13,6 +13,7 @@ urlpatterns = [
+     path("api/recruitment/", include("apps.recruitment.urls")),
+     path("api/communications/", include("apps.communications.urls")),
+     path("api/dashboard/", include("apps.dashboard.urls")),
++    path("api/mailbox/", include("apps.mailbox.urls")),
+ ]
+ 
+ # ADD THIS AT THE VERY END OF THE FILE
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+index 6c3259d..7276fb4 100644
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -11,4 +11,7 @@ sqlparse==0.5.5
+ tzdata==2026.3
+ google-generativeai>=0.7.0
+ PyMuPDF>=1.24.0
+-python-docx>=1.1.0
+\ No newline at end of file
++python-docx>=1.1.0
++google-api-python-client>=2.140.0
++google-auth>=2.34.0
++google-auth-oauthlib>=1.2.1
+\ No newline at end of file

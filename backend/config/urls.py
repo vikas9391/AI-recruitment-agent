@@ -13,6 +13,7 @@ urlpatterns = [
     path("api/recruitment/", include("apps.recruitment.urls")),
     path("api/communications/", include("apps.communications.urls")),
     path("api/dashboard/", include("apps.dashboard.urls")),
+    path("api/mailbox/", include("apps.mailbox.urls")),
 ]
 
 # ADD THIS AT THE VERY END OF THE FILE
