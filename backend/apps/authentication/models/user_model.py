@@ -23,6 +23,7 @@ class Role(models.TextChoices):
     role/permission system. A granular RBAC layer can be layered on
     top of this later without changing the schema drastically.
     """
+    SUPER_ADMIN = "SUPER_ADMIN", "Super Admin"
     HR_ADMIN = "HR_ADMIN", "HR Admin"
     HR_USER = "HR_USER", "HR User"
 
@@ -85,3 +86,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     @property
     def is_hr_admin(self):
         return self.role == Role.HR_ADMIN
+
+    @property
+    def is_super_admin(self):
+        return self.role == Role.SUPER_ADMIN

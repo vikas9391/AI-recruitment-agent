@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { AuthLayout } from "../../components/layout/AuthLayout";
 import { AuthCard } from "../../components/ui/AuthCard";
@@ -10,6 +10,8 @@ import { Alert } from "../../components/ui/Alert";
 import { SectionDivider } from "../../components/ui/SectionDivider";
 import { Logo } from "../../components/ui/Logo";
 import { ShieldCheck } from "lucide-react";
+import { useAuth } from "../../context/AuthContext";
+import { getApiErrorMessage } from "../../lib/apiClient";
 
 interface FormState {
   email: string;
@@ -27,6 +29,8 @@ function validateEmail(email: string) {
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { login } = useAuth();
   const [form, setForm] = useState<FormState>({ email: "", password: "" });
   const [errors, setErrors] = useState<FormErrors>({});
   const [isLoading, setIsLoading] = useState(false);
@@ -49,20 +53,23 @@ export default function Login() {
     return Object.keys(nextErrors).length === 0;
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitError(null);
 
     if (!validate()) return;
 
     setIsLoading(true);
-
-    // TODO:
-    // Backend Integration — connect to auth API, handle JWT, store tokens.
-    setTimeout(() => {
+    try {
+      await login(form.email, form.password);
+      const redirectTo =
+        (location.state as { from?: Location })?.from?.pathname ?? "/dashboard";
+      navigate(redirectTo, { replace: true });
+    } catch (err) {
+      setSubmitError(getApiErrorMessage(err, "Invalid email or password."));
+    } finally {
       setIsLoading(false);
-      navigate("/dashboard");
-    }, 1200);
+    }
   }
 
   return (
@@ -122,6 +129,13 @@ export default function Login() {
         </form>
 
         <SectionDivider />
+
+        <p className="text-center text-sm text-ink-secondary">
+          Don&apos;t have an account?{" "}
+          <Link to="/register" className="font-medium text-accent-blue hover:underline">
+            Create one
+          </Link>
+        </p>
 
         <motion.div
           initial={{ opacity: 0 }}

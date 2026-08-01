@@ -3,11 +3,72 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from apps.authentication.models.company_model import Company
-from apps.authentication.permissions import IsHRAdmin
+from apps.authentication.permissions import IsHRAdmin, IsSuperAdmin
+from apps.authentication.serializers.auth_serializers import (
+    AdminCreateCompanySerializer,
+)
 from apps.authentication.serializers.company_serializers import (
     CompanySerializer,
 )
+from apps.authentication.serializers.user_serializers import UserSerializer
 from apps.authentication.utils import api_response, format_serializer_errors
+
+
+class SuperAdminCompaniesView(APIView):
+    """
+    GET  /api/auth/admin/companies/  -> list every tenant company on
+                                         the platform, with its employee
+                                         count (Super Admin only).
+    POST /api/auth/admin/companies/  -> onboard a brand-new tenant:
+                                         creates the Company plus its
+                                         first HR_ADMIN user in one
+                                         call (Super Admin only). This
+                                         is the multi-tenant admin
+                                         surface — distinct from the
+                                         public, self-service
+                                         RegisterView.
+    """
+
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
+
+    def get(self, request):
+        companies = Company.objects.all().order_by("-created_at")
+        data = []
+        for company in companies:
+            payload = CompanySerializer(company).data
+            payload["employee_count"] = company.employees.count()
+            data.append(payload)
+
+        return api_response(
+            success=True,
+            message="Companies fetched successfully.",
+            data=data,
+            status_code=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = AdminCreateCompanySerializer(data=request.data)
+        if not serializer.is_valid():
+            return api_response(
+                success=False,
+                message=format_serializer_errors(serializer.errors),
+                data=serializer.errors,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        admin_user = serializer.save()
+        return api_response(
+            success=True,
+            message=(
+                f"Company '{admin_user.company.company_name}' and its "
+                "HR Admin account were created successfully."
+            ),
+            data={
+                "company": CompanySerializer(admin_user.company).data,
+                "admin": UserSerializer(admin_user).data,
+            },
+            status_code=status.HTTP_201_CREATED,
+        )
 
 
 class CompanyListCreateView(APIView):

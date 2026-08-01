@@ -10,6 +10,7 @@ import {
   BarChart3,
   MailCheck,
   ShieldCheck,
+  Building2,
   Settings,
   LogOut,
   ChevronsLeft,
@@ -17,6 +18,8 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { Logo } from "../ui/Logo";
+import { useAuth } from "../../context/AuthContext";
+import { useNavigate } from "react-router-dom";
 
 interface SidebarProps {
   collapsed: boolean;
@@ -36,6 +39,12 @@ const NAV_ITEMS = [
   { to: "/dashboard/email-approval", label: "Email Approval", icon: MailCheck },
   { to: "/dashboard/admin/users", label: "Admin Panel", icon: ShieldCheck },
 ];
+
+const PLATFORM_NAV_ITEM = {
+  to: "/platform/companies",
+  label: "Platform Admin",
+  icon: Building2,
+};
 
 function SidebarItem({
   to,
@@ -76,6 +85,15 @@ function SidebarItem({
 }
 
 export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: SidebarProps) {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const navItems = user?.role === "SUPER_ADMIN" ? [...NAV_ITEMS, PLATFORM_NAV_ITEM] : NAV_ITEMS;
+
+  async function handleLogout() {
+    await logout();
+    navigate("/login", { replace: true });
+  }
+
   const content = (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between px-2 py-2 mb-4">
@@ -90,7 +108,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
       </div>
 
       <nav className="flex-1 space-y-1">
-        {NAV_ITEMS.map((item) => (
+        {navItems.map((item) => (
           <SidebarItem key={item.to} {...item} collapsed={collapsed} onClick={onMobileClose} />
         ))}
       </nav>
@@ -98,6 +116,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
       <div className="space-y-1 pt-4 border-t border-glass-border">
         <SidebarItem to="/dashboard/settings" label="Settings" icon={Settings} collapsed={collapsed} onClick={onMobileClose} />
         <button
+          onClick={handleLogout}
           className="w-full flex items-center gap-3 rounded-2xl px-3.5 py-2.5 text-sm text-danger hover:bg-danger/5 transition-colors"
           type="button"
         >

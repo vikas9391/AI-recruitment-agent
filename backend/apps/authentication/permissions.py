@@ -21,6 +21,23 @@ class IsHRAdmin(BasePermission):
         )
 
 
+class IsSuperAdmin(BasePermission):
+    """
+    Grants access only to the platform-level Super Admin role — the
+    only role allowed to create new tenant companies and their first
+    HR Admin, i.e. the multi-tenant onboarding surface.
+    """
+
+    message = "Only a Super Admin can perform this action."
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and request.user.role == Role.SUPER_ADMIN
+        )
+
+
 class IsSameCompany(BasePermission):
     """
     Object-level permission: restricts access to objects belonging to
