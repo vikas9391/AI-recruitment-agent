@@ -1,11 +1,16 @@
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, MapPin, Users, IndianRupee, Calendar, Briefcase } from "lucide-react";
+import { X, MapPin, Users, IndianRupee, Calendar, Briefcase, Mail, Loader2 } from "lucide-react";
 import { JobStatusBadge } from "./JobStatusBadge";
 import type { Job } from "../../types/job";
+import { pullResumesForJob, type ResumeIngestionSummary } from "../../lib/mailboxApi";
 
 interface JobDetailsDrawerProps {
   job: Job | null;
   onClose: () => void;
+  // Called with the fresh summary after a manual sync completes, so the
+  // parent (Jobs page) can refresh its application counts if it wants to.
+  onResumesSynced?: (jobId: string, summary: ResumeIngestionSummary) => void;
 }
 
 const MOCK_ACTIVITY = [
@@ -14,7 +19,27 @@ const MOCK_ACTIVITY = [
   { label: "Shortlisting started", time: "2 days ago" },
 ];
 
-export function JobDetailsDrawer({ job, onClose }: JobDetailsDrawerProps) {
+export function JobDetailsDrawer({ job, onClose, onResumesSynced }: JobDetailsDrawerProps) {
+  const [syncing, setSyncing] = useState(false);
+  const [syncSummary, setSyncSummary] = useState<ResumeIngestionSummary | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  async function handleSyncGmail() {
+    if (!job) return;
+    setSyncing(true);
+    setSyncError(null);
+    setSyncSummary(null);
+    try {
+      const summary = await pullResumesForJob(job.id);
+      setSyncSummary(summary);
+      onResumesSynced?.(job.id, summary);
+    } catch {
+      setSyncError("Couldn't sync Gmail right now. Try again in a moment.");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   return (
     <AnimatePresence>
       {job && (
@@ -61,6 +86,26 @@ export function JobDetailsDrawer({ job, onClose }: JobDetailsDrawerProps) {
               <div className="flex items-center gap-2 text-ink-secondary">
                 <Calendar size={14} /> Deadline: {job.deadline}
               </div>
+            </div>
+
+            <div className="mt-6">
+              <button
+                onClick={handleSyncGmail}
+                disabled={syncing}
+                className="flex items-center gap-2 text-sm font-medium px-3 py-2 rounded-lg bg-ink/5 text-ink hover:bg-ink/10 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {syncing ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
+                {syncing ? "Syncing Gmail…" : "Sync Gmail for resumes"}
+              </button>
+
+              {syncSummary && (
+                <p className="mt-2 text-xs text-ink-secondary">
+                  {syncSummary.attempted
+                    ? `Found ${syncSummary.found} matching email(s) — ${syncSummary.created} added, ${syncSummary.skipped} skipped, ${syncSummary.failed} failed.`
+                    : syncSummary.errors[0] ?? "No connected mailbox to sync from."}
+                </p>
+              )}
+              {syncError && <p className="mt-2 text-xs text-red-500">{syncError}</p>}
             </div>
 
             <div className="mt-6">

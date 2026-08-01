@@ -43,10 +43,15 @@ class GmailOAuthService:
 
     @staticmethod
     def get_authorization_url(state: str) -> str:
+        # autogenerate_code_verifier=False: we're a confidential client
+        # (client_secret) using a stateless callback across two separate
+        # HTTP requests, so PKCE's code_verifier can't be carried over
+        # from this Flow instance to the one exchange_code() builds later.
         flow = Flow.from_client_config(
             GmailOAuthService._client_config(),
             scopes=GMAIL_SCOPES,
             redirect_uri=settings.GMAIL_REDIRECT_URI,
+            autogenerate_code_verifier=False,
         )
         auth_url, _ = flow.authorization_url(
             access_type="offline",
@@ -62,6 +67,7 @@ class GmailOAuthService:
             GmailOAuthService._client_config(),
             scopes=GMAIL_SCOPES,
             redirect_uri=settings.GMAIL_REDIRECT_URI,
+            autogenerate_code_verifier=False,
         )
         flow.fetch_token(code=code)
         credentials = flow.credentials

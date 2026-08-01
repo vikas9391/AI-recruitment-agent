@@ -15,6 +15,11 @@ from decouple import config
 from datetime import timedelta
 import os
 
+# Allow OAuth token exchange over plain HTTP — LOCAL DEVELOPMENT ONLY.
+# Never set this in production; production must use HTTPS redirect URIs.
+if config("DEBUG", cast=bool, default=False):
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -31,6 +36,19 @@ DEBUG = config("DEBUG", cast=bool)
 ALLOWED_HOSTS = config("ALLOWED_HOSTS").split(",")
 
 
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+}
 # Application definition
 
 INSTALLED_APPS = [

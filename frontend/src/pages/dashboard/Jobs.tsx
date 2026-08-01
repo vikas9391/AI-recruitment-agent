@@ -154,7 +154,17 @@ export default function Jobs() {
         onClose={() => setModalOpen(false)}
         onCreate={(job) => setJobs((prev) => [job, ...prev])}
       />
-      <JobDetailsDrawer job={selectedJob} onClose={() => setSelectedJob(null)} />
+      <JobDetailsDrawer
+        job={selectedJob}
+        onClose={() => setSelectedJob(null)}
+        onResumesSynced={(jobId, summary) => {
+          if (summary.created > 0) {
+            setJobs((prev) =>
+              prev.map((j) => (j.id === jobId ? { ...j, applications: j.applications + summary.created } : j))
+            );
+          }
+        }}
+      />
     </DashboardLayout>
   );
 }

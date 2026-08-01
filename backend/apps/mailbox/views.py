@@ -1,3 +1,5 @@
+import logging
+
 from django.conf import settings
 from django.core import signing
 from django.shortcuts import redirect
@@ -12,6 +14,8 @@ from apps.jobs.services import JobService
 from .models import GmailAccount
 from .serializers import GmailAccountStatusSerializer
 from .services import GmailOAuthService, ResumeIngestionService
+
+logger = logging.getLogger(__name__)
 
 STATE_SALT = "mailbox.gmail-oauth"
 
@@ -60,6 +64,7 @@ class GmailOAuthCallbackView(APIView):
         try:
             GmailOAuthService.exchange_code(code, company)
         except Exception:  # noqa: BLE001
+            logger.exception("Gmail OAuth code exchange failed for company_id=%s", company.id)
             return redirect(f"{frontend_base}/dashboard/settings/mailbox?status=error&reason=exchange_failed")
 
         return redirect(f"{frontend_base}/dashboard/settings/mailbox?status=connected")
