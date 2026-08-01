@@ -47,22 +47,22 @@ class GmailOAuthCallbackView(APIView):
         frontend_base = settings.FRONTEND_URL.rstrip("/")
 
         if error:
-            return redirect(f"{frontend_base}/settings/mailbox?status=error&reason={error}")
+            return redirect(f"{frontend_base}/dashboard/settings/mailbox?status=error&reason={error}")
         if not code or not state:
-            return redirect(f"{frontend_base}/settings/mailbox?status=error&reason=missing_params")
+            return redirect(f"{frontend_base}/dashboard/settings/mailbox?status=error&reason=missing_params")
 
         try:
             payload = signing.loads(state, salt=STATE_SALT, max_age=600)
             company = Company.objects.get(id=payload["company_id"])
         except (signing.BadSignature, Company.DoesNotExist):
-            return redirect(f"{frontend_base}/settings/mailbox?status=error&reason=invalid_state")
+            return redirect(f"{frontend_base}/dashboard/settings/mailbox?status=error&reason=invalid_state")
 
         try:
             GmailOAuthService.exchange_code(code, company)
         except Exception:  # noqa: BLE001
-            return redirect(f"{frontend_base}/settings/mailbox?status=error&reason=exchange_failed")
+            return redirect(f"{frontend_base}/dashboard/settings/mailbox?status=error&reason=exchange_failed")
 
-        return redirect(f"{frontend_base}/settings/mailbox?status=connected")
+        return redirect(f"{frontend_base}/dashboard/settings/mailbox?status=connected")
 
 
 class GmailAccountStatusView(APIView):

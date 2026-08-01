@@ -1,5 +1,6 @@
 import { apiClient, type ApiEnvelope } from "./apiClient";
 import type { Job } from "../types/job";
+import type { ResumeIngestionSummary } from "./mailboxApi";
 
 // ---- Raw shapes returned by Django/DRF (snake_case, backend enums) ----
 
@@ -28,6 +29,10 @@ interface BackendJob {
   created_by_name?: string;
   created_at: string;
   updated_at?: string;
+}
+
+interface BackendJobWithIngestion extends BackendJob {
+  resume_ingestion?: ResumeIngestionSummary | null;
 }
 
 interface PaginatedResult<T> {
@@ -167,8 +172,8 @@ export async function fetchJob(id: string) {
 }
 
 export async function createJob(payload: CreateJobPayload) {
-  const { data } = await apiClient.post<ApiEnvelope<BackendJob>>("/jobs/", toBackendPayload(payload));
-  return mapBackendJob(data.data);
+  const { data } = await apiClient.post<ApiEnvelope<BackendJobWithIngestion>>("/jobs/", toBackendPayload(payload));
+  return { job: mapBackendJob(data.data), resumeIngestion: data.data.resume_ingestion ?? null };
 }
 
 export async function updateJob(id: string, payload: CreateJobPayload) {
@@ -181,8 +186,8 @@ export async function deleteJob(id: string) {
 }
 
 export async function openJob(id: string) {
-  const { data } = await apiClient.post<ApiEnvelope<BackendJob>>(`/jobs/${id}/open/`);
-  return mapBackendJob(data.data);
+  const { data } = await apiClient.post<ApiEnvelope<BackendJobWithIngestion>>(`/jobs/${id}/open/`);
+  return { job: mapBackendJob(data.data), resumeIngestion: data.data.resume_ingestion ?? null };
 }
 
 export async function closeJob(id: string) {

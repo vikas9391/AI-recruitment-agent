@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Download } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Plus, Download, Mail } from "lucide-react";
 import { DashboardLayout } from "../../components/layout/DashboardLayout";
 import { Button } from "../../components/ui/Button";
 import { SummaryCards } from "../../components/jobs/SummaryCards";
@@ -90,6 +91,12 @@ export default function Jobs() {
             <p className="text-sm text-ink-secondary mt-1">Manage all job openings in one place.</p>
           </div>
           <div className="flex items-center gap-3">
+            <Link to="/dashboard/settings/mailbox">
+              <Button variant="ghost" className="!px-4 !py-2.5 text-sm">
+                <Mail size={15} className="mr-1.5" />
+                Resume Inbox
+              </Button>
+            </Link>
             <Button
               variant="ghost"
               className="!px-4 !py-2.5 text-sm"

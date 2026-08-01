@@ -19,6 +19,7 @@ import RolesPermissions from "../pages/dashboard/admin/RolesPermissions";
 import AuditLogs from "../pages/dashboard/admin/AuditLogs";
 import SystemSettings from "../pages/dashboard/admin/SystemSettings";
 import PlatformCompanies from "../pages/platform/Companies";
+import MailboxSettings from "../pages/dashboard/MailboxSettings";
 import { ProtectedRoute } from "../components/auth/ProtectedRoute";
 import { SuperAdminRoute } from "../components/auth/SuperAdminRoute";
 
@@ -41,6 +42,7 @@ export const router = createBrowserRouter([
   { path: "/dashboard/assessments", element: guarded(<Assessments />) },
   { path: "/dashboard/analytics", element: guarded(<Analytics />) },
   { path: "/dashboard/email-approval", element: guarded(<EmailApproval />) },
+  { path: "/dashboard/settings/mailbox", element: guarded(<MailboxSettings />) },
   { path: "/candidate/assessment", element: <CandidateAssessment /> },
   { path: "/candidate/coding", element: <CandidateCoding /> },
   { path: "/candidate/submission", element: <CandidateSubmission /> },

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
+import { toast } from "sonner";
 import { Input } from "../ui/Input";
 import { Button } from "../ui/Button";
 import {
@@ -72,7 +73,7 @@ export function CreateJobModal({ open, onClose, onCreate }: CreateJobModalProps)
     setSubmitting(true);
     setError("");
     try {
-      const job = await createJob({
+      const { job, resumeIngestion } = await createJob({
         title: form.title,
         department: form.department,
         location: form.location,
@@ -93,6 +94,26 @@ export function CreateJobModal({ open, onClose, onCreate }: CreateJobModalProps)
       onCreate(job);
       resetForm();
       onClose();
+
+      // Surface what the synchronous Gmail resume pull just did (or didn't do).
+      if (!resumeIngestion || !resumeIngestion.attempted) {
+        const reason = resumeIngestion?.errors?.[0];
+        toast.info(
+          reason
+            ? `Job created. Resume pull skipped: ${reason}`
+            : "Job created. Connect Gmail to auto-pull matching resumes."
+        );
+      } else if (resumeIngestion.created > 0) {
+        toast.success(
+          `Job created. Pulled ${resumeIngestion.created} resume${resumeIngestion.created === 1 ? "" : "s"} from Gmail.`
+        );
+      } else if (resumeIngestion.found > 0) {
+        toast.info(
+          `Job created. Found ${resumeIngestion.found} matching email(s), but none produced a new application (already applied or unparsable).`
+        );
+      } else {
+        toast.info("Job created. No matching resume emails found yet.");
+      }
     } catch (err) {
       setError(getApiErrorMessage(err, "Failed to create job. Please check the fields and try again."));
     } finally {
