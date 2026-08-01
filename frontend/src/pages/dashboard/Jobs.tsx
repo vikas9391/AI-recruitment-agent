@@ -11,7 +11,9 @@ import { CreateJobModal } from "../../components/jobs/CreateJobModal";
 import { JobDetailsDrawer } from "../../components/jobs/JobDetailsDrawer";
 import { EmptyState } from "../../components/jobs/EmptyState";
 import { SkeletonCards, SkeletonTable } from "../../components/jobs/LoadingSkeleton";
-import { jobsMockData, type Job } from "../../constants/jobsMockData";
+import type { Job } from "../../types/job";
+import { fetchJobs, deleteJob } from "../../lib/jobsApi";
+import { getApiErrorMessage } from "../../lib/apiClient";
 
 const EMPTY_FILTERS: JobFilters = {
   department: "",
@@ -23,16 +25,41 @@ const EMPTY_FILTERS: JobFilters = {
 
 export default function Jobs() {
   const [loading, setLoading] = useState(true);
-  const [jobs, setJobs] = useState<Job[]>(jobsMockData);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<JobFilters>(EMPTY_FILTERS);
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
 
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 700);
-    return () => clearTimeout(timer);
+    let cancelled = false;
+    setLoading(true);
+    fetchJobs()
+      .then(({ jobs }) => {
+        if (!cancelled) setJobs(jobs);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(getApiErrorMessage(err, "Failed to load jobs."));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  const handleDelete = async (id: string) => {
+    const previous = jobs;
+    setJobs((prev) => prev.filter((j) => j.id !== id)); // optimistic
+    try {
+      await deleteJob(id);
+    } catch (err) {
+      setJobs(previous); // roll back on failure
+      setError(getApiErrorMessage(err, "Failed to delete job."));
+    }
+  };
 
   const filteredJobs = useMemo(() => {
     return jobs.filter((job) => {
@@ -78,6 +105,10 @@ export default function Jobs() {
           </div>
         </div>
 
+        {error && (
+          <p className="text-sm text-danger bg-danger/10 rounded-xl px-4 py-2.5">{error}</p>
+        )}
+
         {loading ? (
           <SkeletonCards />
         ) : (
@@ -99,7 +130,7 @@ export default function Jobs() {
               <JobTable
                 jobs={filteredJobs}
                 onView={setSelectedJob}
-                onDelete={(id) => setJobs((prev) => prev.filter((j) => j.id !== id))}
+                onDelete={handleDelete}
               />
             </div>
             <div className="grid sm:grid-cols-2 gap-4 lg:hidden">

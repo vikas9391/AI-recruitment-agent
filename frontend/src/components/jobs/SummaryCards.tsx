@@ -1,7 +1,7 @@
 import { Briefcase, CheckCircle2, XCircle, FileEdit } from "lucide-react";
 import { GlassCard } from "../ui/GlassCard";
 import { AnimatedCounter } from "./AnimatedCounter";
-import type { Job } from "../../constants/jobsMockData";
+import type { Job } from "../../types/job";
 
 export function SummaryCards({ jobs }: { jobs: Job[] }) {
   const total = jobs.length;

@@ -7,9 +7,10 @@ import {
   departments,
   locations,
   employmentTypes,
-  experienceLevels,
-} from "../../constants/jobsMockData";
-import type { Job } from "../../constants/jobsMockData";
+} from "../../types/job";
+import type { Job } from "../../types/job";
+import { createJob } from "../../lib/jobsApi";
+import { getApiErrorMessage } from "../../lib/apiClient";
 
 interface CreateJobModalProps {
   open: boolean;
@@ -26,58 +27,77 @@ export function CreateJobModal({ open, onClose, onCreate }: CreateJobModalProps)
     department: departments[0],
     location: locations[0],
     employmentType: employmentTypes[0],
-    experienceLevel: experienceLevels[0],
     experience: "",
-    salaryRange: "",
+    educationRequired: "",
+    requirements: "",
+    responsibilities: "",
+    salaryMin: "",
+    salaryMax: "",
+    remoteType: "ONSITE" as "ONSITE" | "REMOTE" | "HYBRID",
     vacancies: "1",
     skills: "",
     deadline: "",
     description: "",
   });
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   const update = (key: keyof typeof form, value: string) =>
     setForm((f) => ({ ...f, [key]: value }));
 
-  const handleSubmit = () => {
-    if (!form.title.trim() || !form.description.trim()) {
-      setError("Job title and description are required.");
-      return;
-    }
-    // TODO: Backend Integration — replace with API call to create job
-
-    onCreate({
-      id: `job-${Date.now()}`,
-      title: form.title,
-      department: form.department,
-      location: form.location,
-      employmentType: form.employmentType as Job["employmentType"],
-      experienceLevel: form.experienceLevel as Job["experienceLevel"],
-      experience: form.experience || "Not specified",
-      applications: 0,
-      status: "Draft",
-      createdDate: new Date().toISOString().slice(0, 10),
-      salaryRange: form.salaryRange || "Not disclosed",
-      vacancies: Number(form.vacancies) || 1,
-      skills: form.skills.split(",").map((s) => s.trim()).filter(Boolean),
-      description: form.description,
-      deadline: form.deadline || "Not specified",
-    });
-    setError("");
+  const resetForm = () =>
     setForm({
       title: "",
       department: departments[0],
       location: locations[0],
       employmentType: employmentTypes[0],
-      experienceLevel: experienceLevels[0],
       experience: "",
-      salaryRange: "",
+      educationRequired: "",
+      requirements: "",
+      responsibilities: "",
+      salaryMin: "",
+      salaryMax: "",
+      remoteType: "ONSITE",
       vacancies: "1",
       skills: "",
       deadline: "",
       description: "",
     });
-    onClose();
+
+  const handleSubmit = async () => {
+    if (!form.title.trim() || !form.description.trim() || !form.deadline) {
+      setError("Job title, description, and deadline are required.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      const job = await createJob({
+        title: form.title,
+        department: form.department,
+        location: form.location,
+        employmentType: form.employmentType as Job["employmentType"],
+        experience: form.experience || "Not specified",
+        educationRequired: form.educationRequired,
+        requirements: form.requirements,
+        responsibilities: form.responsibilities,
+        description: form.description,
+        salaryMin: form.salaryMin ? Number(form.salaryMin) : undefined,
+        salaryMax: form.salaryMax ? Number(form.salaryMax) : undefined,
+        remoteType: form.remoteType,
+        vacancies: Number(form.vacancies) || 1,
+        skills: form.skills.split(",").map((s) => s.trim()).filter(Boolean),
+        deadline: form.deadline,
+        status: "Draft",
+      });
+      onCreate(job);
+      resetForm();
+      onClose();
+    } catch (err) {
+      setError(getApiErrorMessage(err, "Failed to create job. Please check the fields and try again."));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -136,20 +156,32 @@ export function CreateJobModal({ open, onClose, onCreate }: CreateJobModalProps)
               </div>
 
               <div>
-                <label className="text-xs text-ink-secondary mb-1 block">Experience Level</label>
-                <select className={selectClass} value={form.experienceLevel} onChange={(e) => update("experienceLevel", e.target.value)}>
-                  {experienceLevels.map((l) => <option key={l} value={l}>{l}</option>)}
+                <label className="text-xs text-ink-secondary mb-1 block">Remote Type</label>
+                <select className={selectClass} value={form.remoteType} onChange={(e) => update("remoteType", e.target.value)}>
+                  <option value="ONSITE">Onsite</option>
+                  <option value="REMOTE">Remote</option>
+                  <option value="HYBRID">Hybrid</option>
                 </select>
               </div>
 
               <div>
                 <label className="text-xs text-ink-secondary mb-1 block">Experience Required</label>
-                <Input value={form.experience} onChange={(e) => update("experience", e.target.value)} placeholder="e.g. 2-4 yrs" />
+                <Input value={form.experience} onChange={(e) => update("experience", e.target.value)} placeholder="e.g. 2-4 years" />
               </div>
 
               <div>
-                <label className="text-xs text-ink-secondary mb-1 block">Salary Range</label>
-                <Input value={form.salaryRange} onChange={(e) => update("salaryRange", e.target.value)} placeholder="e.g. ₹8L - ₹14L" />
+                <label className="text-xs text-ink-secondary mb-1 block">Education Required</label>
+                <Input value={form.educationRequired} onChange={(e) => update("educationRequired", e.target.value)} placeholder="e.g. B.Tech in CS" />
+              </div>
+
+              <div>
+                <label className="text-xs text-ink-secondary mb-1 block">Salary Min (₹)</label>
+                <Input type="number" value={form.salaryMin} onChange={(e) => update("salaryMin", e.target.value)} placeholder="800000" />
+              </div>
+
+              <div>
+                <label className="text-xs text-ink-secondary mb-1 block">Salary Max (₹)</label>
+                <Input type="number" value={form.salaryMax} onChange={(e) => update("salaryMax", e.target.value)} placeholder="1400000" />
               </div>
 
               <div>
@@ -173,17 +205,37 @@ export function CreateJobModal({ open, onClose, onCreate }: CreateJobModalProps)
                   className="w-full text-sm rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-accent-blue/40 dark:border-gray-700 dark:bg-gray-900 min-h-[100px]"
                   value={form.description}
                   onChange={(e) => update("description", e.target.value)}
-                  placeholder="Describe the role and responsibilities..."
+                  placeholder="Describe the role..."
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="text-xs text-ink-secondary mb-1 block">Requirements</label>
+                <textarea
+                  className="w-full text-sm rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-accent-blue/40 dark:border-gray-700 dark:bg-gray-900 min-h-[80px]"
+                  value={form.requirements}
+                  onChange={(e) => update("requirements", e.target.value)}
+                  placeholder="Must-have qualifications..."
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="text-xs text-ink-secondary mb-1 block">Responsibilities</label>
+                <textarea
+                  className="w-full text-sm rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-accent-blue/40 dark:border-gray-700 dark:bg-gray-900 min-h-[80px]"
+                  value={form.responsibilities}
+                  onChange={(e) => update("responsibilities", e.target.value)}
+                  placeholder="Day-to-day responsibilities..."
                 />
               </div>
             </div>
 
             <div className="mt-6 flex justify-end gap-3">
-              <Button variant="ghost" className="!px-5 !py-2.5 text-sm" onClick={onClose}>
+              <Button variant="ghost" className="!px-5 !py-2.5 text-sm" onClick={onClose} disabled={submitting}>
                 Cancel
               </Button>
-              <Button variant="primary" className="!px-5 !py-2.5 text-sm" onClick={handleSubmit}>
-                Create Job
+              <Button variant="primary" className="!px-5 !py-2.5 text-sm" onClick={handleSubmit} disabled={submitting}>
+                {submitting ? "Creating..." : "Create Job"}
               </Button>
             </div>
           </motion.div>

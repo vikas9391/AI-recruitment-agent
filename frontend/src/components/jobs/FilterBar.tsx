@@ -5,7 +5,7 @@ import {
   employmentTypes,
   experienceLevels,
   jobStatuses,
-} from "../../constants/jobsMockData";
+} from "../../types/job";
 
 export interface JobFilters {
   department: string;

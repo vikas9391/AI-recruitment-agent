@@ -1,7 +1,7 @@
 import { MapPin, Users } from "lucide-react";
 import { GlassCard } from "../ui/GlassCard";
 import { JobStatusBadge } from "./JobStatusBadge";
-import type { Job } from "../../constants/jobsMockData";
+import type { Job } from "../../types/job";
 
 interface JobCardProps {
   job: Job;

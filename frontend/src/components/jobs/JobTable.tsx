@@ -3,7 +3,7 @@ import { Eye, Pencil, Trash2, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { JobStatusBadge } from "./JobStatusBadge";
 import { Button } from "../ui/Button";
-import type { Job } from "../../constants/jobsMockData";
+import type { Job } from "../../types/job";
 
 interface JobTableProps {
   jobs: Job[];

@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { X, MapPin, Users, IndianRupee, Calendar, Briefcase } from "lucide-react";
 import { JobStatusBadge } from "./JobStatusBadge";
-import type { Job } from "../../constants/jobsMockData";
+import type { Job } from "../../types/job";
 
 interface JobDetailsDrawerProps {
   job: Job | null;
