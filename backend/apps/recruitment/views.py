@@ -55,7 +55,7 @@ class ReprocessApplicationView(APIView):
     permission_classes = [IsAuthenticated, IsHRUserOrAdmin]
 
     def post(self, request, pk: int):
-        application = ApplicationService.process_application(int(pk))
+        application = ApplicationService.process_application(int(pk), request.user)
         serializer = ApplicationDetailSerializer(application)
         return api_response(True, "Application re-processed successfully.", serializer.data, status.HTTP_200_OK)
 
@@ -65,20 +65,20 @@ class ApplicationViewSet(viewsets.ViewSet):
     pagination_class = StandardResultsSetPagination
 
     def list(self, request):
-        queryset = ApplicationService.list_applications(request.query_params)
+        queryset = ApplicationService.list_applications(request.query_params, request.user)
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(queryset, request)
         serializer = ApplicationListSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
     def retrieve(self, request, pk=None):
-        application = ApplicationService.get_application(int(pk))
+        application = ApplicationService.get_application(int(pk), request.user)
         serializer = ApplicationDetailSerializer(application)
         return api_response(True, "Application fetched successfully.", serializer.data, status.HTTP_200_OK)
 
     @action(detail=True, methods=["get"], url_path="analysis")
     def analysis(self, request, pk=None):
-        application = ApplicationService.get_application(int(pk))
+        application = ApplicationService.get_application(int(pk), request.user)
         if not hasattr(application, "analysis"):
             return api_response(False, "Resume analysis not available for this application.", {}, status.HTTP_404_NOT_FOUND)
         from .serializers import ResumeAnalysisSerializer
@@ -87,7 +87,7 @@ class ApplicationViewSet(viewsets.ViewSet):
 
     @action(detail=True, methods=["get"], url_path="score")
     def score(self, request, pk=None):
-        application = ApplicationService.get_application(int(pk))
+        application = ApplicationService.get_application(int(pk), request.user)
         if not hasattr(application, "score"):
             return api_response(False, "Resume score not available for this application.", {}, status.HTTP_404_NOT_FOUND)
         from .serializers import ResumeScoreSerializer
@@ -96,7 +96,7 @@ class ApplicationViewSet(viewsets.ViewSet):
 
     @action(detail=True, methods=["get"], url_path="timeline")
     def timeline(self, request, pk=None):
-        application = ApplicationService.get_application(int(pk))
+        application = ApplicationService.get_application(int(pk), request.user)
         from .serializers import ApplicationHistorySerializer
         serializer = ApplicationHistorySerializer(application.history.all(), many=True)
         return api_response(True, "Application timeline fetched successfully.", serializer.data, status.HTTP_200_OK)
@@ -109,6 +109,7 @@ class ApplicationViewSet(viewsets.ViewSet):
             int(pk),
             serializer.validated_data["status"],
             serializer.validated_data.get("remarks", ""),
+            request.user,
         )
         response_serializer = ApplicationDetailSerializer(application)
         return api_response(True, "Application status updated successfully.", response_serializer.data, status.HTTP_200_OK)
@@ -118,7 +119,7 @@ class ApplicationViewSet(viewsets.ViewSet):
         serializer = RecruiterNotesUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         application = ApplicationService.update_recruiter_notes(
-            int(pk), serializer.validated_data["recruiter_notes"]
+            int(pk), serializer.validated_data["recruiter_notes"], request.user
         )
         response_serializer = ApplicationDetailSerializer(application)
         return api_response(True, "Recruiter notes updated successfully.", response_serializer.data, status.HTTP_200_OK)

@@ -26,14 +26,14 @@ class JobViewSet(viewsets.ViewSet):
         return super().get_permissions()
 
     def list(self, request):
-        queryset = JobService.list_jobs(request.query_params)
+        queryset = JobService.list_jobs(request.query_params, request.user)
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(queryset, request)
         serializer = JobListSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
     def retrieve(self, request, pk=None):
-        job = JobService.get_job(int(pk))
+        job = JobService.get_job(int(pk), request.user)
         serializer = JobDetailSerializer(job)
         return api_response(True, "Job fetched successfully.", serializer.data, status.HTTP_200_OK)
 
@@ -45,33 +45,33 @@ class JobViewSet(viewsets.ViewSet):
         return api_response(True, "Job created successfully.", response_serializer.data, status.HTTP_201_CREATED)
 
     def update(self, request, pk=None):
-        job = JobService.get_job(int(pk))
+        job = JobService.get_job(int(pk), request.user)
         serializer = JobCreateUpdateSerializer(instance=job, data=request.data, partial=False)
         serializer.is_valid(raise_exception=True)
-        updated_job = JobService.update_job(int(pk), serializer.validated_data)
+        updated_job = JobService.update_job(int(pk), serializer.validated_data, request.user)
         response_serializer = JobDetailSerializer(updated_job)
         return api_response(True, "Job updated successfully.", response_serializer.data, status.HTTP_200_OK)
 
     def partial_update(self, request, pk=None):
-        job = JobService.get_job(int(pk))
+        job = JobService.get_job(int(pk), request.user)
         serializer = JobCreateUpdateSerializer(instance=job, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        updated_job = JobService.update_job(int(pk), serializer.validated_data)
+        updated_job = JobService.update_job(int(pk), serializer.validated_data, request.user)
         response_serializer = JobDetailSerializer(updated_job)
         return api_response(True, "Job updated successfully.", response_serializer.data, status.HTTP_200_OK)
 
     def destroy(self, request, pk=None):
-        JobService.delete_job(int(pk))
+        JobService.delete_job(int(pk), request.user)
         return api_response(True, "Job deleted successfully.", {}, status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="open")
     def open_job(self, request, pk=None):
-        job = JobService.open_job(int(pk))
+        job = JobService.open_job(int(pk), request.user)
         serializer = JobDetailSerializer(job)
         return api_response(True, "Job opened successfully.", serializer.data, status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="close")
     def close_job(self, request, pk=None):
-        job = JobService.close_job(int(pk))
+        job = JobService.close_job(int(pk), request.user)
         serializer = JobDetailSerializer(job)
         return api_response(True, "Job closed successfully.", serializer.data, status.HTTP_200_OK)

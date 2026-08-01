@@ -46,8 +46,10 @@ class JobDetailSerializer(serializers.ModelSerializer):
 class JobCreateUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Job
+        # `company` is intentionally excluded — it's always set server-side
+        # from the requesting user's own company, never client-supplied.
         fields = [
-            "company", "title", "department", "description", "requirements",
+            "title", "department", "description", "requirements",
             "responsibilities", "employment_type", "experience_required",
             "education_required", "salary_min", "salary_max", "location",
             "remote_type", "skills_required", "vacancies", "deadline", "status",

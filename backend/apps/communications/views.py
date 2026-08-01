@@ -25,6 +25,14 @@ from .models import EmailLog
 
 
 class EmailTemplateViewSet(viewsets.ViewSet):
+    """
+    NOTE: EmailTemplate has no company FK in the current schema — templates
+    are shared globally across all tenants by design (see models.py). If
+    you want templates to be per-company, that needs a migration adding
+    `company` to EmailTemplate; this view can't scope what the model
+    doesn't store.
+    """
+
     permission_classes = [IsAuthenticated, IsHRAdminOrReadOnly]
     pagination_class = StandardResultsSetPagination
 
@@ -80,7 +88,10 @@ class EmailLogViewSet(viewsets.ViewSet):
     pagination_class = StandardResultsSetPagination
 
     def list(self, request):
-        queryset = EmailLog.objects.select_related("template", "application", "candidate").all()
+        queryset = (
+            EmailLog.objects.select_related("template", "application", "candidate")
+            .filter(application__job__company=request.user.company)
+        )
 
         application_id = request.query_params.get("application_id")
         if application_id:
@@ -100,7 +111,11 @@ class EmailLogViewSet(viewsets.ViewSet):
         return paginator.get_paginated_response(serializer.data)
 
     def retrieve(self, request, pk=None):
-        log = EmailLog.objects.select_related("template", "application", "candidate").filter(id=pk).first()
+        log = (
+            EmailLog.objects.select_related("template", "application", "candidate")
+            .filter(id=pk, application__job__company=request.user.company)
+            .first()
+        )
         if not log:
             return api_response(False, "Email log not found.", {}, status.HTTP_404_NOT_FOUND)
         serializer = EmailLogSerializer(log)
@@ -114,7 +129,9 @@ class SendManualEmailView(APIView):
         serializer = ManualEmailSendSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        application = ApplicationService.get_application(serializer.validated_data["application_id"])
+        application = ApplicationService.get_application(
+            serializer.validated_data["application_id"], request.user
+        )
         template = EmailTemplateService.get_template(serializer.validated_data["template_id"])
 
         from .services import NotificationService
@@ -129,14 +146,14 @@ class InterviewScheduleViewSet(viewsets.ViewSet):
     pagination_class = StandardResultsSetPagination
 
     def list(self, request):
-        queryset = InterviewSchedulingService.list_interviews(request.query_params)
+        queryset = InterviewSchedulingService.list_interviews(request.query_params, request.user)
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(queryset, request)
         serializer = InterviewScheduleSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
     def retrieve(self, request, pk=None):
-        interview = InterviewSchedulingService.get_interview(int(pk))
+        interview = InterviewSchedulingService.get_interview(int(pk), request.user)
         serializer = InterviewScheduleSerializer(interview)
         return api_response(True, "Interview fetched successfully.", serializer.data, status.HTTP_200_OK)
 
@@ -151,7 +168,9 @@ class InterviewScheduleViewSet(viewsets.ViewSet):
     def reschedule(self, request, pk=None):
         serializer = InterviewRescheduleSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        interview = InterviewSchedulingService.reschedule_interview(int(pk), serializer.validated_data)
+        interview = InterviewSchedulingService.reschedule_interview(
+            int(pk), serializer.validated_data, request.user
+        )
         response_serializer = InterviewScheduleSerializer(interview)
         return api_response(True, "Interview rescheduled successfully.", response_serializer.data, status.HTTP_200_OK)
 
@@ -160,13 +179,13 @@ class InterviewScheduleViewSet(viewsets.ViewSet):
         serializer = InterviewCancelSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         interview = InterviewSchedulingService.cancel_interview(
-            int(pk), serializer.validated_data.get("notes", "")
+            int(pk), serializer.validated_data.get("notes", ""), request.user
         )
         response_serializer = InterviewScheduleSerializer(interview)
         return api_response(True, "Interview cancelled successfully.", response_serializer.data, status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="complete")
     def complete(self, request, pk=None):
-        interview = InterviewSchedulingService.complete_interview(int(pk))
+        interview = InterviewSchedulingService.complete_interview(int(pk), request.user)
         response_serializer = InterviewScheduleSerializer(interview)
         return api_response(True, "Interview marked as completed.", response_serializer.data, status.HTTP_200_OK)

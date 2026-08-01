@@ -22,7 +22,7 @@ class DashboardOverviewView(APIView):
         filters = DateRangeFilterSerializer(data=request.query_params)
         filters.is_valid(raise_exception=True)
         data = OverviewDashboardService.get_kpis(
-            filters.validated_data.get("start_date"), filters.validated_data.get("end_date")
+            request.user, filters.validated_data.get("start_date"), filters.validated_data.get("end_date")
         )
         return api_response(True, "Dashboard KPIs fetched successfully.", data, 200)
 
@@ -36,7 +36,7 @@ class ApplicationStatusBreakdownView(APIView):
         filters = DateRangeFilterSerializer(data=request.query_params)
         filters.is_valid(raise_exception=True)
         data = OverviewDashboardService.get_application_status_breakdown(
-            filters.validated_data.get("start_date"), filters.validated_data.get("end_date")
+            request.user, filters.validated_data.get("start_date"), filters.validated_data.get("end_date")
         )
         return api_response(True, "Application status breakdown fetched successfully.", data, 200)
 
@@ -53,6 +53,7 @@ class ApplicationsTimelineView(APIView):
         if granularity not in ("day", "month"):
             granularity = "day"
         data = OverviewDashboardService.get_applications_timeline(
+            request.user,
             filters.validated_data.get("start_date"),
             filters.validated_data.get("end_date"),
             granularity,
@@ -67,7 +68,7 @@ class RecentApplicationsView(APIView):
 
     def get(self, request):
         limit = int(request.query_params.get("limit", 10))
-        data = OverviewDashboardService.get_recent_applications(limit=limit)
+        data = OverviewDashboardService.get_recent_applications(request.user, limit=limit)
         return api_response(True, "Recent applications fetched successfully.", data, 200)
 
 
@@ -78,7 +79,7 @@ class UpcomingInterviewsView(APIView):
 
     def get(self, request):
         limit = int(request.query_params.get("limit", 10))
-        data = OverviewDashboardService.get_upcoming_interviews(limit=limit)
+        data = OverviewDashboardService.get_upcoming_interviews(request.user, limit=limit)
         return api_response(True, "Upcoming interviews fetched successfully.", data, 200)
 
 
@@ -88,7 +89,7 @@ class JobAnalyticsView(APIView):
     permission_classes = [IsAuthenticated, IsHRUserOrAdmin]
 
     def get(self, request):
-        data = JobAnalyticsService.get_job_analytics(request.query_params)
+        data = JobAnalyticsService.get_job_analytics(request.user, request.query_params)
         return api_response(True, "Job analytics fetched successfully.", data, 200)
 
 
@@ -98,7 +99,7 @@ class DepartmentDistributionView(APIView):
     permission_classes = [IsAuthenticated, IsHRUserOrAdmin]
 
     def get(self, request):
-        data = JobAnalyticsService.get_department_distribution()
+        data = JobAnalyticsService.get_department_distribution(request.user)
         return api_response(True, "Department distribution fetched successfully.", data, 200)
 
 
@@ -109,7 +110,7 @@ class TopJobsView(APIView):
 
     def get(self, request):
         limit = int(request.query_params.get("limit", 5))
-        data = JobAnalyticsService.get_top_jobs_by_applications(limit=limit)
+        data = JobAnalyticsService.get_top_jobs_by_applications(request.user, limit=limit)
         return api_response(True, "Top jobs fetched successfully.", data, 200)
 
 
@@ -119,7 +120,7 @@ class CandidateAnalyticsView(APIView):
     permission_classes = [IsAuthenticated, IsHRUserOrAdmin]
 
     def get(self, request):
-        data = CandidateAnalyticsService.get_candidate_analytics()
+        data = CandidateAnalyticsService.get_candidate_analytics(request.user)
         return api_response(True, "Candidate analytics fetched successfully.", data, 200)
 
 
@@ -129,5 +130,5 @@ class ScreeningAnalyticsView(APIView):
     permission_classes = [IsAuthenticated, IsHRUserOrAdmin]
 
     def get(self, request):
-        data = ScreeningAnalyticsService.get_screening_analytics()
+        data = ScreeningAnalyticsService.get_screening_analytics(request.user)
         return api_response(True, "Resume screening analytics fetched successfully.", data, 200)

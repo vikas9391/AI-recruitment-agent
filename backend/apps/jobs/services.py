@@ -12,13 +12,18 @@ class JobService:
     @staticmethod
     @transaction.atomic
     def create_job(data: Dict[str, Any], user) -> Job:
-        job = Job.objects.create(created_by=user, **data)
+        # `company` is never trusted from client input — it's always the
+        # caller's own tenant, so a HR Admin can't create a job under
+        # another company's id.
+        data.pop("company", None)
+        job = Job.objects.create(created_by=user, company=user.company, **data)
         return job
 
     @staticmethod
     @transaction.atomic
-    def update_job(job_id: int, data: Dict[str, Any]) -> Job:
-        job = JobService.get_job(job_id)
+    def update_job(job_id: int, data: Dict[str, Any], user) -> Job:
+        job = JobService.get_job(job_id, user)
+        data.pop("company", None)  # company can never be reassigned via update
         for field, value in data.items():
             setattr(job, field, value)
         job.save()
@@ -26,27 +31,27 @@ class JobService:
 
     @staticmethod
     @transaction.atomic
-    def delete_job(job_id: int) -> None:
-        job = JobService.get_job(job_id)
+    def delete_job(job_id: int, user) -> None:
+        job = JobService.get_job(job_id, user)
         job.delete()
 
     @staticmethod
-    def get_job(job_id: int) -> Job:
-        job = Job.objects.filter(id=job_id).first()
+    def get_job(job_id: int, user) -> Job:
+        job = Job.objects.filter(id=job_id, company=user.company).first()
         if not job:
             raise NotFound("Job not found.")
         return job
 
     @staticmethod
-    def list_jobs(query_params: Dict[str, Any]) -> QuerySet:
-        queryset = Job.objects.all()
+    def list_jobs(query_params: Dict[str, Any], user) -> QuerySet:
+        # Always scoped to the caller's own company — never cross-tenant.
+        queryset = Job.objects.filter(company=user.company)
 
         search = query_params.get("search")
         if search:
             queryset = queryset.filter(
                 Q(title__icontains=search)
                 | Q(description__icontains=search)
-                | Q(company__icontains=search)
                 | Q(department__icontains=search)
             )
 
@@ -56,7 +61,6 @@ class JobService:
             "remote_type": ("remote_type", query_params.get("remote_type")),
             "status": ("status", query_params.get("status")),
             "location": ("location__icontains", query_params.get("location")),
-            "company": ("company__icontains", query_params.get("company")),
         }
         for _, (lookup, value) in filters.items():
             if value:
@@ -78,8 +82,8 @@ class JobService:
 
     @staticmethod
     @transaction.atomic
-    def open_job(job_id: int) -> Job:
-        job = JobService.get_job(job_id)
+    def open_job(job_id: int, user) -> Job:
+        job = JobService.get_job(job_id, user)
         if job.status == Job.Status.OPEN:
             raise ValidationError("Job is already open.")
         job.status = Job.Status.OPEN
@@ -88,8 +92,8 @@ class JobService:
 
     @staticmethod
     @transaction.atomic
-    def close_job(job_id: int) -> Job:
-        job = JobService.get_job(job_id)
+    def close_job(job_id: int, user) -> Job:
+        job = JobService.get_job(job_id, user)
         if job.status == Job.Status.CLOSED:
             raise ValidationError("Job is already closed.")
         job.status = Job.Status.CLOSED

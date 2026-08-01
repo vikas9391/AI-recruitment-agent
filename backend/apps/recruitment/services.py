@@ -430,11 +430,11 @@ class ApplicationService:
 
     @staticmethod
     @transaction.atomic
-    def process_application(application_id: int) -> "Application":
+    def process_application(application_id: int, user=None) -> "Application":
         """Runs the full screening pipeline: parse -> AI analyze -> mandatory check -> score -> decide."""
         from .models import Application
 
-        application = ApplicationService.get_application(application_id)
+        application = ApplicationService.get_application(application_id, user)
         job = application.job
         resume = application.resume
 
@@ -504,24 +504,32 @@ class ApplicationService:
         return application
 
     @staticmethod
-    def get_application(application_id: int) -> "Application":
+    def get_application(application_id: int, user=None) -> "Application":
         from .models import Application
 
-        application = (
+        queryset = (
             Application.objects.select_related("job", "candidate", "resume", "analysis", "score")
             .prefetch_related("history")
-            .filter(id=application_id)
-            .first()
         )
+        # `user=None` is used for the internal candidate-submission flow
+        # (ApplyForJobView), where there's no HR caller to scope against.
+        # Every HR-facing call site passes `user` and gets tenant-scoped.
+        if user is not None:
+            queryset = queryset.filter(job__company=user.company)
+
+        application = queryset.filter(id=application_id).first()
         if not application:
             raise NotFound("Application not found.")
         return application
 
     @staticmethod
-    def list_applications(query_params: Dict[str, Any]):
+    def list_applications(query_params: Dict[str, Any], user):
         from .models import Application
 
-        queryset = Application.objects.select_related("job", "candidate", "score").all()
+        queryset = (
+            Application.objects.select_related("job", "candidate", "score")
+            .filter(job__company=user.company)
+        )
 
         job_id = query_params.get("job_id")
         if job_id:
@@ -552,8 +560,8 @@ class ApplicationService:
 
     @staticmethod
     @transaction.atomic
-    def update_status(application_id: int, new_status: str, remarks: str = "") -> "Application":
-        application = ApplicationService.get_application(application_id)
+    def update_status(application_id: int, new_status: str, remarks: str = "", user=None) -> "Application":
+        application = ApplicationService.get_application(application_id, user)
         application.status = new_status
         application.save(update_fields=["status", "updated_at"])
         ApplicationHistoryService.log(application, new_status, remarks or "Status updated by recruiter.")
@@ -561,8 +569,8 @@ class ApplicationService:
 
     @staticmethod
     @transaction.atomic
-    def update_recruiter_notes(application_id: int, notes: str) -> "Application":
-        application = ApplicationService.get_application(application_id)
+    def update_recruiter_notes(application_id: int, notes: str, user=None) -> "Application":
+        application = ApplicationService.get_application(application_id, user)
         application.recruiter_notes = notes
         application.save(update_fields=["recruiter_notes", "updated_at"])
         return application

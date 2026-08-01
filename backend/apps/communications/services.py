@@ -226,17 +226,25 @@ class NotificationService:
 class InterviewSchedulingService:
 
     @staticmethod
-    def get_interview(interview_id: int) -> InterviewSchedule:
-        interview = InterviewSchedule.objects.select_related("application", "application__candidate", "application__job").filter(id=interview_id).first()
+    def get_interview(interview_id: int, user=None) -> InterviewSchedule:
+        queryset = InterviewSchedule.objects.select_related(
+            "application", "application__candidate", "application__job"
+        )
+        # `user=None` only for internal/system callers; every HR-facing call
+        # site passes `user` so cross-tenant interviews are never visible.
+        if user is not None:
+            queryset = queryset.filter(application__job__company=user.company)
+
+        interview = queryset.filter(id=interview_id).first()
         if not interview:
             raise NotFound("Interview not found.")
         return interview
 
     @staticmethod
-    def list_interviews(query_params: Dict[str, Any]):
+    def list_interviews(query_params: Dict[str, Any], user):
         queryset = InterviewSchedule.objects.select_related(
             "application", "application__candidate", "application__job"
-        ).all()
+        ).filter(application__job__company=user.company)
 
         application_id = query_params.get("application_id")
         if application_id:
@@ -261,6 +269,11 @@ class InterviewSchedulingService:
             if not application:
                 raise NotFound("Application not found.")
 
+        # An HR user can only schedule interviews for applications tied to
+        # their own company's jobs — never another tenant's.
+        if application.job.company_id != scheduled_by.company_id:
+            raise NotFound("Application not found.")
+
         interview = InterviewSchedule.objects.create(
             application=application,
             scheduled_by=scheduled_by,
@@ -272,8 +285,8 @@ class InterviewSchedulingService:
 
     @staticmethod
     @transaction.atomic
-    def reschedule_interview(interview_id: int, data: Dict[str, Any]) -> InterviewSchedule:
-        interview = InterviewSchedulingService.get_interview(interview_id)
+    def reschedule_interview(interview_id: int, data: Dict[str, Any], user=None) -> InterviewSchedule:
+        interview = InterviewSchedulingService.get_interview(interview_id, user)
         if interview.status == InterviewSchedule.Status.CANCELLED:
             raise ValidationError("Cannot reschedule a cancelled interview.")
 
@@ -287,8 +300,8 @@ class InterviewSchedulingService:
 
     @staticmethod
     @transaction.atomic
-    def cancel_interview(interview_id: int, notes: str = "") -> InterviewSchedule:
-        interview = InterviewSchedulingService.get_interview(interview_id)
+    def cancel_interview(interview_id: int, notes: str = "", user=None) -> InterviewSchedule:
+        interview = InterviewSchedulingService.get_interview(interview_id, user)
         if interview.status == InterviewSchedule.Status.CANCELLED:
             raise ValidationError("Interview is already cancelled.")
 
@@ -302,8 +315,8 @@ class InterviewSchedulingService:
 
     @staticmethod
     @transaction.atomic
-    def complete_interview(interview_id: int) -> InterviewSchedule:
-        interview = InterviewSchedulingService.get_interview(interview_id)
+    def complete_interview(interview_id: int, user=None) -> InterviewSchedule:
+        interview = InterviewSchedulingService.get_interview(interview_id, user)
         if interview.status == InterviewSchedule.Status.CANCELLED:
             raise ValidationError("Cannot complete a cancelled interview.")
         interview.status = InterviewSchedule.Status.COMPLETED

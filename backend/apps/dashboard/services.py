@@ -25,17 +25,19 @@ class DashboardFilterMixin:
 class OverviewDashboardService(DashboardFilterMixin):
 
     @staticmethod
-    def get_kpis(start_date: Optional[date] = None, end_date: Optional[date] = None) -> Dict[str, Any]:
-        jobs_qs = Job.objects.all()
+    def get_kpis(user, start_date: Optional[date] = None, end_date: Optional[date] = None) -> Dict[str, Any]:
+        # Every queryset below is scoped to the caller's own company —
+        # never platform-wide.
+        jobs_qs = Job.objects.filter(company=user.company)
         applications_qs = OverviewDashboardService.apply_date_range(
-            Application.objects.all(), "applied_at", start_date, end_date
+            Application.objects.filter(job__company=user.company), "applied_at", start_date, end_date
         )
 
         total_jobs = jobs_qs.count()
         open_jobs = jobs_qs.filter(status=Job.Status.OPEN).count()
         closed_jobs = jobs_qs.filter(status=Job.Status.CLOSED).count()
 
-        total_candidates = Candidate.objects.count()
+        total_candidates = Candidate.objects.filter(applications__job__company=user.company).distinct().count()
         total_applications = applications_qs.count()
         shortlisted = applications_qs.filter(status=Application.Status.SHORTLISTED).count()
         rejected = applications_qs.filter(
@@ -101,10 +103,10 @@ class OverviewDashboardService(DashboardFilterMixin):
 
     @staticmethod
     def get_application_status_breakdown(
-        start_date: Optional[date] = None, end_date: Optional[date] = None
+        user, start_date: Optional[date] = None, end_date: Optional[date] = None
     ) -> List[Dict[str, Any]]:
         applications_qs = OverviewDashboardService.apply_date_range(
-            Application.objects.all(), "applied_at", start_date, end_date
+            Application.objects.filter(job__company=user.company), "applied_at", start_date, end_date
         )
         rows = (
             applications_qs.values("status")
@@ -115,10 +117,10 @@ class OverviewDashboardService(DashboardFilterMixin):
 
     @staticmethod
     def get_applications_timeline(
-        start_date: Optional[date] = None, end_date: Optional[date] = None, granularity: str = "day"
+        user, start_date: Optional[date] = None, end_date: Optional[date] = None, granularity: str = "day"
     ) -> List[Dict[str, Any]]:
         applications_qs = OverviewDashboardService.apply_date_range(
-            Application.objects.all(), "applied_at", start_date, end_date
+            Application.objects.filter(job__company=user.company), "applied_at", start_date, end_date
         )
 
         trunc_fn = TruncMonth if granularity == "month" else TruncDate
@@ -133,9 +135,10 @@ class OverviewDashboardService(DashboardFilterMixin):
         return [{"period": row["period"].strftime(fmt), "count": row["count"]} for row in rows]
 
     @staticmethod
-    def get_recent_applications(limit: int = 10) -> List[Dict[str, Any]]:
+    def get_recent_applications(user, limit: int = 10) -> List[Dict[str, Any]]:
         applications = (
             Application.objects.select_related("candidate", "job", "score")
+            .filter(job__company=user.company)
             .order_by("-applied_at")[:limit]
         )
         results = []
@@ -152,7 +155,7 @@ class OverviewDashboardService(DashboardFilterMixin):
         return results
 
     @staticmethod
-    def get_upcoming_interviews(limit: int = 10) -> List[Dict[str, Any]]:
+    def get_upcoming_interviews(user, limit: int = 10) -> List[Dict[str, Any]]:
         try:
             from apps.communications.models import InterviewSchedule
         except ImportError:
@@ -161,7 +164,7 @@ class OverviewDashboardService(DashboardFilterMixin):
         today = timezone.now().date()
         interviews = (
             InterviewSchedule.objects.select_related("application", "application__candidate", "application__job")
-            .filter(interview_date__gte=today)
+            .filter(interview_date__gte=today, application__job__company=user.company)
             .exclude(status=InterviewSchedule.Status.CANCELLED)
             .order_by("interview_date", "interview_time")[:limit]
         )
@@ -182,8 +185,8 @@ class OverviewDashboardService(DashboardFilterMixin):
 class JobAnalyticsService(DashboardFilterMixin):
 
     @staticmethod
-    def get_job_analytics(query_params: Dict[str, Any]) -> List[Dict[str, Any]]:
-        jobs_qs = Job.objects.all()
+    def get_job_analytics(user, query_params: Dict[str, Any]) -> List[Dict[str, Any]]:
+        jobs_qs = Job.objects.filter(company=user.company)
 
         department = query_params.get("department")
         if department:
@@ -237,9 +240,10 @@ class JobAnalyticsService(DashboardFilterMixin):
         return results
 
     @staticmethod
-    def get_department_distribution() -> List[Dict[str, Any]]:
+    def get_department_distribution(user) -> List[Dict[str, Any]]:
         rows = (
-            Job.objects.values("department")
+            Job.objects.filter(company=user.company)
+            .values("department")
             .annotate(
                 job_count=Count("id", distinct=True),
                 application_count=Count("applications", distinct=True),
@@ -256,24 +260,29 @@ class JobAnalyticsService(DashboardFilterMixin):
         ]
 
     @staticmethod
-    def get_top_jobs_by_applications(limit: int = 5) -> List[Dict[str, Any]]:
-        return JobAnalyticsService.get_job_analytics({})[:limit]
+    def get_top_jobs_by_applications(user, limit: int = 5) -> List[Dict[str, Any]]:
+        return JobAnalyticsService.get_job_analytics(user, {})[:limit]
 
 
 class CandidateAnalyticsService:
 
     @staticmethod
-    def get_candidate_analytics() -> Dict[str, Any]:
-        total_candidates = Candidate.objects.count()
+    def get_candidate_analytics(user) -> Dict[str, Any]:
+        # "Candidates" scoped to this company = candidates who've applied
+        # to at least one of this company's jobs. Candidate itself has no
+        # company FK (one candidate row can apply across companies), so
+        # scoping has to go through the application relation.
+        company_candidates_qs = Candidate.objects.filter(applications__job__company=user.company).distinct()
+        total_candidates = company_candidates_qs.count()
 
         today = timezone.now().date()
         month_start = today.replace(day=1)
-        new_this_month = Candidate.objects.filter(created_at__date__gte=month_start).count()
+        new_this_month = company_candidates_qs.filter(created_at__date__gte=month_start).count()
 
-        top_skills = CandidateAnalyticsService._top_skills(limit=10)
-        experience_distribution = CandidateAnalyticsService._experience_distribution()
+        top_skills = CandidateAnalyticsService._top_skills(user, limit=10)
+        experience_distribution = CandidateAnalyticsService._experience_distribution(user)
 
-        total_applications = Application.objects.count()
+        total_applications = Application.objects.filter(job__company=user.company).count()
         applications_per_candidate_avg = (
             round(total_applications / total_candidates, 2) if total_candidates else 0.0
         )
@@ -287,9 +296,14 @@ class CandidateAnalyticsService:
         }
 
     @staticmethod
-    def _top_skills(limit: int = 10) -> List[Dict[str, Any]]:
+    def _top_skills(user, limit: int = 10) -> List[Dict[str, Any]]:
         skill_counter: Counter = Counter()
-        for skills in Candidate.objects.exclude(skills=[]).values_list("skills", flat=True):
+        candidates_qs = (
+            Candidate.objects.filter(applications__job__company=user.company)
+            .distinct()
+            .exclude(skills=[])
+        )
+        for skills in candidates_qs.values_list("skills", flat=True):
             if isinstance(skills, list):
                 for skill in skills:
                     normalized = str(skill).strip().lower()
@@ -302,10 +316,11 @@ class CandidateAnalyticsService:
         ]
 
     @staticmethod
-    def _experience_distribution() -> Dict[str, int]:
+    def _experience_distribution(user) -> Dict[str, int]:
         buckets = {"0-1 years": 0, "1-3 years": 0, "3-5 years": 0, "5-10 years": 0, "10+ years": 0, "Not specified": 0}
 
-        for exp in Candidate.objects.values_list("total_experience_years", flat=True):
+        candidates_qs = Candidate.objects.filter(applications__job__company=user.company).distinct()
+        for exp in candidates_qs.values_list("total_experience_years", flat=True):
             if exp is None:
                 buckets["Not specified"] += 1
             elif exp < 1:
@@ -325,8 +340,8 @@ class CandidateAnalyticsService:
 class ScreeningAnalyticsService:
 
     @staticmethod
-    def get_screening_analytics() -> Dict[str, Any]:
-        scores_qs = ResumeScore.objects.all()
+    def get_screening_analytics(user) -> Dict[str, Any]:
+        scores_qs = ResumeScore.objects.filter(application__job__company=user.company)
         total_resumes_analyzed = scores_qs.count()
 
         aggregates = scores_qs.aggregate(
@@ -340,12 +355,13 @@ class ScreeningAnalyticsService:
             avg_keyword=Avg("keyword_match_score"),
         )
 
-        total_analyzed = ResumeAnalysis.objects.count()
-        passed_mandatory = ResumeAnalysis.objects.filter(mandatory_skills_passed=True).count()
+        analysis_qs = ResumeAnalysis.objects.filter(application__job__company=user.company)
+        total_analyzed = analysis_qs.count()
+        passed_mandatory = analysis_qs.filter(mandatory_skills_passed=True).count()
         pass_rate = round((passed_mandatory / total_analyzed) * 100, 2) if total_analyzed else 0.0
 
         score_distribution = ScreeningAnalyticsService._score_distribution(scores_qs)
-        missing_skills = ScreeningAnalyticsService._most_common_missing_skills(limit=10)
+        missing_skills = ScreeningAnalyticsService._most_common_missing_skills(user, limit=10)
 
         def _fmt(value) -> float:
             return round(float(value), 2) if value is not None else 0.0
@@ -378,9 +394,13 @@ class ScreeningAnalyticsService:
         return results
 
     @staticmethod
-    def _most_common_missing_skills(limit: int = 10) -> List[Dict[str, Any]]:
+    def _most_common_missing_skills(user, limit: int = 10) -> List[Dict[str, Any]]:
         skill_counter: Counter = Counter()
-        for missing in ResumeAnalysis.objects.exclude(missing_skills=[]).values_list("missing_skills", flat=True):
+        analysis_qs = (
+            ResumeAnalysis.objects.filter(application__job__company=user.company)
+            .exclude(missing_skills=[])
+        )
+        for missing in analysis_qs.values_list("missing_skills", flat=True):
             if isinstance(missing, list):
                 for skill in missing:
                     normalized = str(skill).strip().lower()
