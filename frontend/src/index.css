@@ -1,0 +1,46 @@
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #DDF2FF;
+  --color-accent-blue: #65B8FF;
+  --color-accent-purple: #B38BFF;
+  --color-success: #22C55E;
+  --color-warning: #F59E0B;
+  --color-danger: #EF4444;
+  --color-ink: #111827;
+  --color-ink-secondary: #6B7280;
+  --color-glass-card: rgba(255,255,255,0.65);
+  --color-glass-border: rgba(255,255,255,0.5);
+
+  --radius-xl2: 24px;
+  --radius-xl3: 32px;
+
+  --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+
+  --shadow-glass: 0 8px 32px rgba(31, 38, 135, 0.08);
+  --shadow-float: 0 20px 60px rgba(101, 184, 255, 0.25);
+
+  --blur-glass: 20px;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    background-image: linear-gradient(180deg, #EAF7FF 0%, #BFDFFF 50%, #DFF5FF 100%);
+    @apply text-ink font-sans antialiased min-h-screen;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent-blue ring-offset-2 ring-offset-transparent;
+  }
+}
+
+@utility glass {
+  @apply bg-glass-card backdrop-blur-glass border border-glass-border;
+}
+
+@utility glass-card {
+  @apply glass rounded-xl3 shadow-glass;
+}
