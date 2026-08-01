@@ -1,16 +1,22 @@
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { Trophy } from "lucide-react";
 import { DashboardLayout } from "../../components/layout/DashboardLayout";
-import { candidates, type CandidateStatus } from "../../constants/candidatesMockData";
+import type { CandidateListItem, CandidateStatus } from "../../types/candidate";
+import { fetchCandidates } from "../../lib/candidatesApi";
+import { getApiErrorMessage } from "../../lib/apiClient";
 import { cn } from "../../lib/utils";
 
 const STATUS_STYLES: Record<CandidateStatus, string> = {
   Applied: "bg-ink/5 text-ink-secondary border-ink/10",
+  Processing: "bg-accent-blue/10 text-accent-blue border-accent-blue/30",
+  "Under Review": "bg-warning/10 text-warning border-warning/30",
   Shortlisted: "bg-accent-blue/10 text-accent-blue border-accent-blue/30",
-  "Interview Scheduled": "bg-warning/10 text-warning border-warning/30",
   Hired: "bg-success/10 text-success border-success/30",
   Rejected: "bg-danger/10 text-danger border-danger/30",
+  Failed: "bg-danger/10 text-danger border-danger/30",
+  Withdrawn: "bg-ink/5 text-ink-secondary border-ink/10",
 };
 
 function ProgressBar({ value }: { value: number }) {
@@ -31,13 +37,46 @@ const RANK_ACCENT = ["border-warning/50 bg-warning/5", "border-gray-300 bg-white
 
 export default function CandidateRankings() {
   const navigate = useNavigate();
+  const [candidates, setCandidates] = useState<CandidateListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchCandidates()
+      .then(({ candidates }) => {
+        if (!cancelled) setCandidates(candidates);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(getApiErrorMessage(err, "Failed to load rankings."));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const ranked = [...candidates].sort((a, b) => b.matchScore - a.matchScore);
   const topThree = ranked.slice(0, 3);
   const rest = ranked.slice(3);
 
+  if (loading) {
+    return (
+      <DashboardLayout pageTitle="Candidate Rankings">
+        <p className="text-sm text-ink-secondary">Loading rankings...</p>
+      </DashboardLayout>
+    );
+  }
+
   return (
     <DashboardLayout pageTitle="Candidate Rankings">
       <div className="space-y-6">
+        {error && (
+          <p className="text-sm text-danger bg-danger/10 rounded-xl px-4 py-2.5">{error}</p>
+        )}
+
         {/* Top 3 highlighted */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {topThree.map((c, i) => (
@@ -133,8 +172,6 @@ export default function CandidateRankings() {
             </table>
           </div>
         </div>
-
-        {/* TODO: Backend Integration */}
       </div>
     </DashboardLayout>
   );

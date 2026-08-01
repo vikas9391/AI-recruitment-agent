@@ -1,16 +1,22 @@
+import { useEffect, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowLeft, FileText, Download, Mail, Phone, GraduationCap, Sparkles } from "lucide-react";
 import { DashboardLayout } from "../../components/layout/DashboardLayout";
-import { candidates, type CandidateStatus } from "../../constants/candidatesMockData";
+import type { CandidateDetail, CandidateStatus } from "../../types/candidate";
+import { fetchCandidateDetail } from "../../lib/candidatesApi";
+import { getApiErrorMessage } from "../../lib/apiClient";
 import { cn } from "../../lib/utils";
 
 const STATUS_STYLES: Record<CandidateStatus, string> = {
   Applied: "bg-ink/5 text-ink-secondary border-ink/10",
+  Processing: "bg-accent-blue/10 text-accent-blue border-accent-blue/30",
+  "Under Review": "bg-warning/10 text-warning border-warning/30",
   Shortlisted: "bg-accent-blue/10 text-accent-blue border-accent-blue/30",
-  "Interview Scheduled": "bg-warning/10 text-warning border-warning/30",
   Hired: "bg-success/10 text-success border-success/30",
   Rejected: "bg-danger/10 text-danger border-danger/30",
+  Failed: "bg-danger/10 text-danger border-danger/30",
+  Withdrawn: "bg-ink/5 text-ink-secondary border-ink/10",
 };
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -26,7 +32,50 @@ export default function ResumeViewer() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const id = searchParams.get("id");
-  const candidate = candidates.find((c) => c.id === id) ?? candidates[0];
+  const [candidate, setCandidate] = useState<CandidateDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!id) {
+      setError("No candidate specified.");
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    fetchCandidateDetail(id)
+      .then((data) => {
+        if (!cancelled) setCandidate(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(getApiErrorMessage(err, "Failed to load candidate."));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  if (loading) {
+    return (
+      <DashboardLayout pageTitle="Resume Viewer">
+        <p className="text-sm text-ink-secondary">Loading candidate...</p>
+      </DashboardLayout>
+    );
+  }
+
+  if (error || !candidate) {
+    return (
+      <DashboardLayout pageTitle="Resume Viewer">
+        <p className="text-sm text-danger bg-danger/10 rounded-xl px-4 py-2.5 inline-block">
+          {error || "Candidate not found."}
+        </p>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout pageTitle="Resume Viewer">
@@ -49,17 +98,27 @@ export default function ResumeViewer() {
           >
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-semibold text-ink">Resume Preview</h3>
-              <button className="flex items-center gap-1.5 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-ink hover:bg-white/60">
+              <a
+                href={candidate.resumeUrl ?? undefined}
+                target="_blank"
+                rel="noreferrer"
+                className={cn(
+                  "flex items-center gap-1.5 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-ink hover:bg-white/60",
+                  !candidate.resumeUrl && "pointer-events-none opacity-40"
+                )}
+              >
                 <Download size={13} />
                 Download
-              </button>
+              </a>
             </div>
 
             <div className="flex-1 min-h-[480px] rounded-2xl border border-dashed border-gray-300 bg-white/60 flex flex-col items-center justify-center gap-3 text-center px-6">
               <FileText size={40} className="text-ink-secondary" />
-              <p className="text-sm font-medium text-ink">{candidate.name}_Resume.pdf</p>
+              <p className="text-sm font-medium text-ink">{candidate.resumeFileName}</p>
               <p className="text-xs text-ink-secondary max-w-[240px]">
-                PDF preview placeholder — resume upload and rendering will be wired up during backend integration.
+                {candidate.resumeUrl
+                  ? "In-browser PDF preview isn't wired up yet — use Download to open the file."
+                  : "No resume file on this application."}
               </p>
             </div>
           </motion.div>
@@ -122,14 +181,17 @@ export default function ResumeViewer() {
             </Section>
 
             <Section title="Projects">
-              <div className="space-y-3">
-                {candidate.projects.map((p) => (
-                  <div key={p.name}>
-                    <p className="text-sm font-medium text-ink">{p.name}</p>
-                    <p className="text-xs text-ink-secondary mt-0.5">{p.description}</p>
-                  </div>
-                ))}
-              </div>
+              {candidate.projects.length > 0 ? (
+                <ul className="space-y-1.5">
+                  {candidate.projects.map((project) => (
+                    <li key={project} className="text-sm text-ink-secondary">
+                      • {project}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-ink-secondary">No projects listed.</p>
+              )}
             </Section>
 
             <Section title="Certifications">
@@ -152,7 +214,6 @@ export default function ResumeViewer() {
           </motion.div>
         </div>
 
-        {/* TODO: Backend Integration */}
       </div>
     </DashboardLayout>
   );

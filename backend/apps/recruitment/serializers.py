@@ -91,6 +91,11 @@ class ApplicationHistorySerializer(serializers.ModelSerializer):
 class ApplicationListSerializer(serializers.ModelSerializer):
     candidate_name = serializers.CharField(source="candidate.full_name", read_only=True)
     candidate_email = serializers.CharField(source="candidate.email", read_only=True)
+    candidate_skills = serializers.ListField(source="candidate.skills", read_only=True, default=list)
+    candidate_experience_years = serializers.DecimalField(
+        source="candidate.total_experience_years", max_digits=4, decimal_places=1,
+        read_only=True, allow_null=True,
+    )
     job_title = serializers.CharField(source="job.title", read_only=True)
     overall_score = serializers.SerializerMethodField()
 
@@ -98,7 +103,8 @@ class ApplicationListSerializer(serializers.ModelSerializer):
         model = Application
         fields = [
             "id", "job", "job_title", "candidate", "candidate_name",
-            "candidate_email", "status", "overall_score", "applied_at", "updated_at",
+            "candidate_email", "candidate_skills", "candidate_experience_years",
+            "status", "overall_score", "applied_at", "updated_at",
         ]
 
     def get_overall_score(self, obj: Application):

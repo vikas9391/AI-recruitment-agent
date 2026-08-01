@@ -1,17 +1,22 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Search, FileText, UserRound } from "lucide-react";
 import { DashboardLayout } from "../../components/layout/DashboardLayout";
-import { candidates, type CandidateStatus } from "../../constants/candidatesMockData";
+import type { CandidateListItem, CandidateStatus } from "../../types/candidate";
+import { fetchCandidates } from "../../lib/candidatesApi";
+import { getApiErrorMessage } from "../../lib/apiClient";
 import { cn } from "../../lib/utils";
 
 const STATUS_STYLES: Record<CandidateStatus, string> = {
   Applied: "bg-ink/5 text-ink-secondary border-ink/10",
+  Processing: "bg-accent-blue/10 text-accent-blue border-accent-blue/30",
+  "Under Review": "bg-warning/10 text-warning border-warning/30",
   Shortlisted: "bg-accent-blue/10 text-accent-blue border-accent-blue/30",
-  "Interview Scheduled": "bg-warning/10 text-warning border-warning/30",
   Hired: "bg-success/10 text-success border-success/30",
   Rejected: "bg-danger/10 text-danger border-danger/30",
+  Failed: "bg-danger/10 text-danger border-danger/30",
+  Withdrawn: "bg-ink/5 text-ink-secondary border-ink/10",
 };
 
 function StatusBadge({ status }: { status: CandidateStatus }) {
@@ -50,18 +55,41 @@ const MATCH_FILTERS = [
 const STATUS_FILTERS: (CandidateStatus | "all")[] = [
   "all",
   "Applied",
+  "Processing",
+  "Under Review",
   "Shortlisted",
-  "Interview Scheduled",
   "Hired",
   "Rejected",
+  "Withdrawn",
 ];
 
 export default function Candidates() {
   const navigate = useNavigate();
+  const [candidates, setCandidates] = useState<CandidateListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<CandidateStatus | "all">("all");
   const [experienceFilter, setExperienceFilter] = useState("all");
   const [matchFilter, setMatchFilter] = useState("all");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetchCandidates()
+      .then(({ candidates }) => {
+        if (!cancelled) setCandidates(candidates);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(getApiErrorMessage(err, "Failed to load candidates."));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filtered = useMemo(() => {
     return candidates.filter((c) => {
@@ -73,11 +101,12 @@ export default function Candidates() {
 
       const matchesStatus = statusFilter === "all" || c.status === statusFilter;
 
+      const years = c.experienceYears ?? -1;
       const matchesExperience =
         experienceFilter === "all" ||
-        (experienceFilter === "0-2" && c.experienceYears <= 2) ||
-        (experienceFilter === "3-5" && c.experienceYears >= 3 && c.experienceYears <= 5) ||
-        (experienceFilter === "6+" && c.experienceYears >= 6);
+        (experienceFilter === "0-2" && years >= 0 && years <= 2) ||
+        (experienceFilter === "3-5" && years >= 3 && years <= 5) ||
+        (experienceFilter === "6+" && years >= 6);
 
       const matchesScore =
         matchFilter === "all" ||
@@ -87,7 +116,7 @@ export default function Candidates() {
 
       return matchesSearch && matchesStatus && matchesExperience && matchesScore;
     });
-  }, [search, statusFilter, experienceFilter, matchFilter]);
+  }, [candidates, search, statusFilter, experienceFilter, matchFilter]);
 
   return (
     <DashboardLayout pageTitle="Candidates">
@@ -143,6 +172,10 @@ export default function Candidates() {
           </div>
         </div>
 
+        {error && (
+          <p className="text-sm text-danger bg-danger/10 rounded-xl px-4 py-2.5">{error}</p>
+        )}
+
         {/* Table */}
         <div className="glass-card p-0 overflow-hidden">
           <div className="overflow-x-auto">
@@ -161,77 +194,81 @@ export default function Candidates() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((c, i) => (
-                  <motion.tr
-                    key={c.id}
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.25, delay: i * 0.03 }}
-                    className="border-b border-glass-border last:border-0 hover:bg-white/50 transition-colors"
-                  >
-                    <td className="px-4 py-3">
-                      <div className="h-9 w-9 rounded-full bg-ink/90 text-white flex items-center justify-center text-xs font-semibold shrink-0">
-                        {c.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
-                      </div>
+                {loading ? (
+                  <tr>
+                    <td colSpan={9} className="px-4 py-10 text-center text-ink-secondary">
+                      Loading candidates...
                     </td>
-                    <td className="px-4 py-3 font-medium text-ink whitespace-nowrap">{c.name}</td>
-                    <td className="px-4 py-3 text-ink-secondary whitespace-nowrap">{c.email}</td>
-                    <td className="px-4 py-3 text-ink-secondary whitespace-nowrap">{c.appliedJob}</td>
-                    <td className="px-4 py-3 text-ink-secondary whitespace-nowrap">{c.experienceLabel}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1 max-w-[220px]">
-                        {c.skills.slice(0, 2).map((s) => (
-                          <span key={s} className="rounded-full bg-ink/5 px-2 py-0.5 text-xs text-ink-secondary whitespace-nowrap">
-                            {s}
-                          </span>
-                        ))}
-                        {c.skills.length > 2 && (
-                          <span className="rounded-full bg-ink/5 px-2 py-0.5 text-xs text-ink-secondary">
-                            +{c.skills.length - 2}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <MatchScore score={c.matchScore} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusBadge status={c.status} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => navigate(`/dashboard/resume-viewer?id=${c.id}`)}
-                          className="flex items-center gap-1.5 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-ink hover:bg-white transition-colors"
-                        >
-                          <FileText size={13} />
-                          Resume
-                        </button>
-                        <button
-                          onClick={() => navigate(`/dashboard/resume-viewer?id=${c.id}`)}
-                          className="flex items-center gap-1.5 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-ink hover:bg-white transition-colors"
-                        >
-                          <UserRound size={13} />
-                          Profile
-                        </button>
-                      </div>
-                    </td>
-                  </motion.tr>
-                ))}
-
-                {filtered.length === 0 && (
+                  </tr>
+                ) : filtered.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="px-4 py-10 text-center text-ink-secondary">
                       No candidates match your search or filters.
                     </td>
                   </tr>
+                ) : (
+                  filtered.map((c, i) => (
+                    <motion.tr
+                      key={c.id}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.25, delay: i * 0.03 }}
+                      className="border-b border-glass-border last:border-0 hover:bg-white/50 transition-colors"
+                    >
+                      <td className="px-4 py-3">
+                        <div className="h-9 w-9 rounded-full bg-ink/90 text-white flex items-center justify-center text-xs font-semibold shrink-0">
+                          {c.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 font-medium text-ink whitespace-nowrap">{c.name}</td>
+                      <td className="px-4 py-3 text-ink-secondary whitespace-nowrap">{c.email}</td>
+                      <td className="px-4 py-3 text-ink-secondary whitespace-nowrap">{c.appliedJob}</td>
+                      <td className="px-4 py-3 text-ink-secondary whitespace-nowrap">{c.experienceLabel}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1 max-w-[220px]">
+                          {c.skills.slice(0, 2).map((s) => (
+                            <span key={s} className="rounded-full bg-ink/5 px-2 py-0.5 text-xs text-ink-secondary whitespace-nowrap">
+                              {s}
+                            </span>
+                          ))}
+                          {c.skills.length > 2 && (
+                            <span className="rounded-full bg-ink/5 px-2 py-0.5 text-xs text-ink-secondary">
+                              +{c.skills.length - 2}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <MatchScore score={c.matchScore} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={c.status} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => navigate(`/dashboard/resume-viewer?id=${c.id}`)}
+                            className="flex items-center gap-1.5 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-ink hover:bg-white transition-colors"
+                          >
+                            <FileText size={13} />
+                            Resume
+                          </button>
+                          <button
+                            onClick={() => navigate(`/dashboard/resume-viewer?id=${c.id}`)}
+                            className="flex items-center gap-1.5 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-ink hover:bg-white transition-colors"
+                          >
+                            <UserRound size={13} />
+                            Profile
+                          </button>
+                        </div>
+                      </td>
+                    </motion.tr>
+                  ))
                 )}
               </tbody>
             </table>
           </div>
         </div>
-
-        {/* TODO: Backend Integration */}
       </div>
     </DashboardLayout>
   );
